@@ -58,7 +58,7 @@ def _plot_trajectory(traj: dict):
     ax.set_xlim(0, config.ARENA_CM)
     ax.set_ylim(0, config.ARENA_CM)
     ax.set_aspect("equal")
-    ax.set_title("Arena trajectory (1×1 m)")
+    ax.set_title(f"Arena trajectory ({config.ARENA_CM}×{config.ARENA_CM}) cm)")
     ax.set_xlabel("x (cm)")
     ax.set_ylabel("y (cm)")
 
@@ -90,7 +90,7 @@ def _plot_trajectory(traj: dict):
 
     plt.suptitle(f"Trajectory overview ({traj['t'][-1]:.0f}s)", fontsize=14)
     plt.tight_layout()
-    save_path = os.path.join(os.path.dirname(config.TRAJECTORY_HDF5), "trajectory_preview.png")
+    save_path = config.RESULTS_DIR + "/trajectory_preview.png"
     fig.savefig(save_path, bbox_inches="tight", dpi=150)
     print(f"Trajectory plot saved to {save_path}")
     plt.close(fig)
@@ -110,7 +110,7 @@ def main():
     parser = argparse.ArgumentParser(description="Generate agent trajectory")
     parser.add_argument("--duration", type=float, default=600.0,
                         help="Trajectory duration in seconds (default: 600 = 10 min)")
-    parser.add_argument("--plot", action="store_true",
+    parser.add_argument("--plot", action="store_true", default=True,
                         help="Plot trajectory overview")
     args = parser.parse_args()
 

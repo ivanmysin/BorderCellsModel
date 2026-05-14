@@ -33,14 +33,14 @@ SYNAPSE_TYPE_MAP = {
 }
 
 # ========================================================
-DT = 0.05 # ms
+DT = 10 # ms
 # ============================================================
 # Arena & Trajectory (RatInABox)
 # ============================================================
-ARENA_SIZE = 1.0               # 1×1 m arena
+ARENA_SIZE = 0.5               # 1×1 m arena
 ARENA_CM = ARENA_SIZE * 100    # 100 cm
 TRAJECTORY_DT = DT * 0.001      # ms RatInABox step
-SPEED_MEAN = 0.15               # mean speed m/s = 15 cm/s
+SPEED_MEAN = 0.3               # mean speed m/s = 30 cm/s
 THIGMOTAXIS = 0.6               # wall preference
 RANDOM_SEED = 42
 
