@@ -1,0 +1,133 @@
+"""Test HDPopVecGenerator.
+
+Shows: time dynamics, spatial activity map, HD vector components,
+firing rate vs head direction for each of the 2 components.
+"""
+
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import numpy as np
+import matplotlib.pyplot as plt
+import tensorflow as tf
+import config
+
+tf.get_logger().setLevel("ERROR")
+
+from utils.inputs import HDPopVecGenerator
+from utils.test_plots import (set_test_style, plot_activity_map,
+                               plot_hd_response,
+                               load_or_generate_trajectory)
+
+
+def test_hd(save_dir="results/tests"):
+    os.makedirs(save_dir, exist_ok=True)
+
+    traj = load_or_generate_trajectory(duration=60.0)
+    t = traj["t"]
+    x = traj["x"]
+    y = traj["y"]
+    hd = traj["head_direction"]
+
+    extra = np.stack([
+        traj["d_min"], traj["speed"],
+        np.cos(traj["head_direction"]), np.sin(traj["head_direction"]),
+        traj["d_N"], traj["d_S"], traj["d_E"], traj["d_W"],
+    ], axis=-1).astype(np.float32)
+
+    gen = HDPopVecGenerator()
+    rates_hd = []  # list of [batch_i, 2] arrays
+    for i in range(0, len(extra), 100):
+        ei = tf.constant(extra[i:i+100])
+        r = gen(tf.constant(0.0), extra_inputs=ei)
+        rates_hd.append(r.numpy())
+    rates_hd = np.concatenate(rates_hd, axis=0)[:len(t)]  # (n, 2)
+
+    hd_x = rates_hd[:, 0]
+    hd_y = rates_hd[:, 1]
+    hd_magnitude = np.sqrt(hd_x**2 + hd_y**2)
+
+    # Compute expected via manual 18-cell formula
+    fmax = config.HD_POPVEC["f_max_hd"]
+    kappa = config.HD_POPVEC["kappa_hd"]
+    theta_pref_rad = np.deg2rad(config.THETA_PREF)
+    cos_pref = np.cos(theta_pref_rad)
+    sin_pref = np.sin(theta_pref_rad)
+
+    theta = hd[:len(rates_hd)][:, None]
+    r_hd_expected = fmax * np.exp(kappa * (np.cos(theta - theta_pref_rad) - 1.0))
+    expected_hd_x = np.sum(r_hd_expected * cos_pref, axis=1)
+    expected_hd_y = np.sum(r_hd_expected * sin_pref, axis=1)
+    assert np.allclose(hd_x, expected_hd_x, rtol=1e-4), \
+        f"HD_x mismatch: max |diff| = {np.max(np.abs(hd_x - expected_hd_x))}"
+    assert np.allclose(hd_y, expected_hd_y, rtol=1e-3), \
+        f"HD_y mismatch: max |diff| = {np.max(np.abs(hd_y - expected_hd_y))}"
+
+    set_test_style()
+    fig, axes = plt.subplots(2, 3, figsize=(17, 10))
+
+    # 1. Time dynamics — HD_x and HD_y
+    ax = axes[0, 0]
+    n_show = min(len(t), int(10.0 / config.TRAJECTORY_DT))
+    ax.plot(t[:n_show], hd_x[:n_show], linewidth=0.5, label='HD_x')
+    ax.plot(t[:n_show], hd_y[:n_show], linewidth=0.5, label='HD_y')
+    ax.set_title('HD vector components')
+    ax.set_xlabel('Time (s)')
+    ax.set_ylabel('Rate (Hz)')
+    ax.legend(fontsize=7)
+
+    # 2. HD magnitude over time
+    ax = axes[0, 1]
+    ax.plot(t[:n_show], hd_magnitude[:n_show], linewidth=0.5, color='C2')
+    ax.set_title('|HD_vec| magnitude')
+    ax.set_xlabel('Time (s)')
+    ax.set_ylabel('Magnitude')
+
+    # 3. Activity map — HD_x
+    plt.sca(axes[0, 2])
+    idx = min(len(x), len(hd_x))
+    plot_activity_map(
+        x[:idx], y[:idx], hd_x[:idx],
+        title="HD_vec x-component", cmap="coolwarm",
+        vmin=-hd_magnitude.max(), save_path=None,
+    )
+    plt.sca(axes[0, 0])
+
+    # 4. HD_x vs head direction
+    ax = axes[1, 0]
+    plot_hd_response(fig, ax, hd[:idx], hd_x[:idx],
+                     title="HD_x vs head direction")
+
+    # 5. HD_y vs head direction
+    ax = axes[1, 1]
+    plot_hd_response(fig, ax, hd[:idx], hd_y[:idx],
+                     title="HD_y vs head direction")
+
+    # 6. Polar plot: HD vector
+    ax = axes[1, 2]
+    ax = fig.add_subplot(2, 3, 6, projection='polar')
+    theta_bins = np.linspace(-np.pi, np.pi, 72)
+    mag_bins = np.zeros_like(theta_bins, dtype=float)
+    for i, th in enumerate(theta_bins):
+        r_hd = fmax * np.exp(kappa * (np.cos(th - theta_pref_rad) - 1.0))
+        ex = np.sum(r_hd * cos_pref)
+        ey = np.sum(r_hd * sin_pref)
+        mag_bins[i] = np.sqrt(ex**2 + ey**2)
+    ax.plot(theta_bins, mag_bins, 'C2', linewidth=2)
+    ax.set_title('|HD_vec| vs direction (theoretical)')
+
+    plt.suptitle('HDPopVecGenerator Test', fontsize=14, y=1.01)
+    plt.tight_layout()
+    save_path = os.path.join(save_dir, 'test_hd.png')
+    fig.savefig(save_path, bbox_inches='tight', dpi=150)
+    print(f"Saved: {save_path}")
+    plt.close(fig)
+
+    print(f"Test passed — HD_x: [{hd_x.min():.1f}, {hd_x.max():.1f}], "
+          f"HD_y: [{hd_y.min():.1f}, {hd_y.max():.1f}]")
+    return True
+
+
+if __name__ == "__main__":
+    test_hd()
