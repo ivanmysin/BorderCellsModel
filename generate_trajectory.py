@@ -34,6 +34,8 @@ def generate_and_save(duration: float, plot: bool = False):
     print(f"  Duration: {duration:.1f} s, Steps: {n_steps}")
     print(f"  dt: {config.TRAJECTORY_DT:.0f} ms")
     print(f"  d_min range: [{traj['d_min'].min():.1f}, {traj['d_min'].max():.1f}] cm")
+    print(f"  x range: [{traj['x'].min():.1f}, {traj['x'].max():.1f}] cm")
+    print(f"  y range: [{traj['y'].min():.1f}, {traj['y'].max():.1f}] cm")
     print(f"  Speed range: [{traj['speed'].min():.1f}, {traj['speed'].max():.1f}] cm/s")
 
     if plot:

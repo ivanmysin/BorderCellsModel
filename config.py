@@ -39,7 +39,7 @@ DT = 10 # ms
 # ============================================================
 ARENA_SIZE = 0.5               # 1×1 m arena
 ARENA_CM = ARENA_SIZE * 100    # 100 cm
-TRAJECTORY_DT = DT * 0.001      # ms RatInABox step
+TRAJECTORY_DT = DT * 0.001      # sec RatInABox step
 SPEED_MEAN = 0.3               # mean speed m/s = 30 cm/s
 THIGMOTAXIS = 0.6               # wall preference
 RANDOM_SEED = 42

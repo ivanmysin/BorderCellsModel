@@ -17,7 +17,7 @@ class TrajectoryGenerator:
 
         self.env = Environment(
             params={
-                "aspect": config.ARENA_SIZE,
+                "aspect": 1,
                 "scale": config.ARENA_SIZE,
             }
         )
@@ -76,6 +76,7 @@ class TrajectoryGenerator:
             d_min[i] = min(d_N[i], d_S[i], d_E[i], d_W[i])
 
         t = np.arange(n_steps) * self.dt
+
 
         return {
             "x": xs, "y": ys,
