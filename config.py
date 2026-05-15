@@ -113,11 +113,19 @@ LOSS_WEIGHT_FR = 0.1
 LOSS_WEIGHT_SPARSITY = 0.05
 
 # ============================================================
-# MPR / Izhikevich Mean-Field parameters
+# Population parameters (dimensional mode — loaded from CSV)
 # ============================================================
-DELTA_I_DEFAULT = 20.0
-I_EXT_DEFAULT_EXC = 80.0
-I_EXT_DEFAULT_INH = 120.0
+USE_DIMENSIONAL_PARAMS = True   # True: CSV dimensional → IzhikevichMeanField
+DELTA_I_DEFAULT = 20.0           # pA, default spread if not in CSV
+I_EXT_DEFAULT_EXC = 80.0         # pA, default external current (Excitatory)
+I_EXT_DEFAULT_INH = 120.0        # pA, default external current (Inhibitory)
+GSYN_SCALE_DIMENSIONAL = 0.1     # scale factor for gsyn_max in dimensional mode
+
+# ============================================================
+# Synapse reversal potentials (dimensional, mV)
+# ============================================================
+E_REV_EXC_DIM = 0.0              # AMPA reversal (mV)
+E_REV_INH_DIM = -75.0            # GABA-A reversal (mV)
 
 # ============================================================
 # Tsodyks-Markram defaults (fallback if CSV lookup fails)

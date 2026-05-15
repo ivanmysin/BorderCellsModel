@@ -26,13 +26,15 @@ def _get_neuron_row(neuron_type: str) -> dict:
 def get_izhikevich_dimensional_params(neuron_type: str) -> dict:
     """Convert CSV Izhikevich params to neuraltide dimensional MPR params.
 
-    Returns: {V_rest, V_T, Cm, K, A, B, W_jump, Delta_I, I_ext}
+    Returns: {V_rest, V_T, V_peak, V_reset, Cm, K, A, B, W_jump, Delta_I, I_ext}
     """
     row = _get_neuron_row(neuron_type)
     is_exc = row.get("E/I", "e").strip() == "e"
     params = {
         "V_rest": float(row["Izh Vr"]),
         "V_T": float(row["Izh Vt"]),
+        "V_peak": float(row["Izh Vpeak"]),
+        "V_reset": float(row["Izh Vmin"]),
         "Cm": float(row["Izh C"]),
         "K": float(row["Izh k"]),
         "A": float(row["Izh a"]),
