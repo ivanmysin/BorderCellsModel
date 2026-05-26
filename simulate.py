@@ -12,7 +12,10 @@ from neuraltide.synapses import TsodyksMarkramSynapse
 from neuraltide.integrators import EulerIntegrator, HeunIntegrator, RK4Integrator
 
 import config
-from utils.csv_loader import get_synapse_params_for_connection, get_izhikevich_dimensional_params
+from utils.csv_loader import (
+    get_synapse_params_for_connection,
+    get_izhikevich_dimensionless_params,
+)
 from utils.inputs import DistanceFarGenerator, DistanceNearGenerator, SpeedGenerator, HDPopVecGenerator
 from utils.dataset import prepare_batch
 from utils.trajectory import TrajectoryGenerator
@@ -21,53 +24,26 @@ tf.random.set_seed(config.RANDOM_SEED)
 nt.seed_everything(config.RANDOM_SEED)
 
 # ============================================================
-# Population parameters (dimensional — loaded from CSV)
+# Population parameters (from CSV)
 # ============================================================
 
-POP_DIMS = {
-    "pyramidal": get_izhikevich_dimensional_params(config.NEURON_TYPE_MAP["Pyramidal"]),
-    "basket":    get_izhikevich_dimensional_params(config.NEURON_TYPE_MAP["Basket"]),
-    "axoaxonic": get_izhikevich_dimensional_params(config.NEURON_TYPE_MAP["Axoaxonic"]),
-}
+def _rs_params_for_unit(unit_idx: int) -> dict:
+    """RS dimless params from CSV, with small I_ext perturbation per unit."""
+    p = get_izhikevich_dimensionless_params(config.NEURON_TYPE_MAP["Pyramidal"])
+    rng = np.random.default_rng(unit_idx + 42)
+    iext = p["I_ext"] + rng.normal(0, 0.05)
+    p["I_ext"] = max(0.01, iext)
+    return p
 
 
-def _make_pop_params(dims: dict, unit_idx: int = 0, perturb_i_ext: bool = True,
-                     trainable_i_ext: bool = None, trainable_delta_i: bool = None) -> dict:
-    """Convert dimensional CSV params to IzhikevichMeanField params dict.
+def _fs_params() -> dict:
+    """FS dimless params from CSV (Basket)."""
+    return get_izhikevich_dimensionless_params(config.NEURON_TYPE_MAP["Basket"])
 
-    Passes V_rest, V_T, V_peak, V_reset, Cm, K, A, B, W_jump, Delta_I, I_ext
-    as dimensional quantities (mV, pF, nS, pA).  neuraltide converts internally.
-    When perturb_i_ext is True, a small random offset is added to I_ext to
-    break symmetry across populations of the same cell type.
-    """
-    if trainable_i_ext is None:
-        trainable_i_ext = config.TRAIN_POP_IEXT
-    if trainable_delta_i is None:
-        trainable_delta_i = config.TRAIN_POP_DELTA_I
 
-    iext = float(dims["I_ext"])
-    if perturb_i_ext:
-        rng = np.random.default_rng(unit_idx + 42)
-        iext += rng.normal(0, abs(iext) * 0.05)
-
-    return {
-        "V_rest": float(dims["V_rest"]),
-        "V_T":    float(dims["V_T"]),
-        "V_peak": float(dims.get("V_peak", 20.0)),
-        "V_reset": float(dims.get("V_reset", -50.0)),
-        "Cm":     float(dims["Cm"]),
-        "K":      float(dims["K"]),
-        "A":      float(dims["A"]),
-        "B":      float(dims["B"]),
-        "W_jump": float(dims["W_jump"]),
-        "Delta_I": {
-            "value": float(dims["Delta_I"]), "trainable": trainable_delta_i,
-            "min": 0.1,
-        },
-        "I_ext": {
-            "value": max(0.1, iext), "trainable": trainable_i_ext,
-        },
-    }
+def _axo_params() -> dict:
+    """Axo-axonic dimless params from CSV."""
+    return get_izhikevich_dimensionless_params(config.NEURON_TYPE_MAP["Axoaxonic"])
 
 # ============================================================
 # Synapse parameter helpers
@@ -89,15 +65,12 @@ def _make_ts_params(conn_key: str, n_pre: int, n_post: int) -> dict:
             d = config.TM_SYN_DEFAULTS['Inh→Exc']
         g, td, tr, tf_val, u = d['gsyn_max'], d['tau_d'], d['tau_r'], d['tau_f'], d['Uinc']
 
-    if config.USE_DIMENSIONAL_PARAMS:
-        g_scaled = g * config.GSYN_SCALE_DIMENSIONAL
-    else:
-        g_scaled = g
+    g_scaled = g * config.GSYN_SCALE_DIMENSIONAL
 
-    if 'Pyramidal' in conn_key.split('→')[0]:
-        e_r = config.E_REV_EXC_DIM if config.USE_DIMENSIONAL_PARAMS else 1.0
+    if conn_key.startswith('Input') or 'Pyramidal' in conn_key.split('→')[0]:
+        e_r = 1.0
     else:
-        e_r = config.E_REV_INH_DIM if config.USE_DIMENSIONAL_PARAMS else -0.1
+        e_r = -0.1
 
     return {
         'gsyn_max': g_scaled,
@@ -165,17 +138,14 @@ def build_network() -> NetworkGraph:
     pop_names = ['Border_N', 'Border_S', 'Border_E', 'Border_W',
                  'Basket', 'Axo']
 
-    # Dynamic populations
+    # Dynamic populations (dimensionless — computed from CSV)
     for i, name in enumerate(pop_names):
         if i < 4:
-            dims = POP_DIMS["pyramidal"]
-            params = _make_pop_params(dims, unit_idx=i, perturb_i_ext=True)
+            params = _rs_params_for_unit(i)
         elif name == "Basket":
-            dims = POP_DIMS["basket"]
-            params = _make_pop_params(dims, unit_idx=i, perturb_i_ext=False)
+            params = _fs_params()
         else:
-            dims = POP_DIMS["axoaxonic"]
-            params = _make_pop_params(dims, unit_idx=i, perturb_i_ext=False)
+            params = _axo_params()
         pop = IzhikevichMeanField(dt=dt, params=params, name=name)
         graph.add_population(name=name, model=pop)
 

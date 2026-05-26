@@ -18,7 +18,7 @@ NEURON_TYPE_MAP = {
 }
 
 SYNAPSE_TYPE_MAP = {
-    "Pyramidal→Pyramidal": ("CA1", "CA1 Back-Projection", "CA1", "CA1 Pyramidal"),
+    "Pyramidal→Pyramidal": ("CA1", "CA1 Pyramidal", "CA1", "CA1 Pyramidal"),
     "Pyramidal→Basket":    ("CA1", "CA1 Pyramidal", "CA1", "CA1 Basket"),
     "Pyramidal→Axoaxonic": ("CA1", "CA1 Pyramidal", "CA1", "CA1 Axo-Axonic"),
     "Basket→Pyramidal":    ("CA1", "CA1 Basket", "CA1", "CA1 Pyramidal"),
@@ -116,10 +116,27 @@ LOSS_WEIGHT_SPARSITY = 0.05
 # Population parameters (dimensional mode — loaded from CSV)
 # ============================================================
 USE_DIMENSIONAL_PARAMS = True   # True: CSV dimensional → IzhikevichMeanField
-DELTA_I_DEFAULT = 20.0           # pA, default spread if not in CSV
-I_EXT_DEFAULT_EXC = 80.0         # pA, default external current (Excitatory)
-I_EXT_DEFAULT_INH = 120.0        # pA, default external current (Inhibitory)
-GSYN_SCALE_DIMENSIONAL = 0.1     # scale factor for gsyn_max in dimensional mode
+
+# Target dimensionless MPR parameters (neuraltide converts dimensional→dimless)
+I_EXT_DIMENSIONLESS_RS = 0.2    # Regular Spiking (Pyramidal / Border)
+I_EXT_DIMENSIONLESS_FS = 0.5    # Fast Spiking (Basket, Axo-axonic)
+DELTA_I_DIMENSIONLESS = 0.5     # spread of input current
+MPR_ALPHA_MIN = 0.5             # minimum dimensionless alpha (threshold)
+MPR_TAU_POP_MIN = 50.0          # minimum tau_pop (ms), RS stable value
+TAU_POP_RS = 50.0               # RS population time constant (ms)
+TAU_POP_FS = 10.0               # FS population time constant (ms)
+MPR_A_RS = 0.02                 # RS adaptation rate
+MPR_B_RS = 0.2                  # RS adaptation coupling
+MPR_WJ_RS = 0.02                # RS adaptation jump
+MPR_A_FS = 0.1                  # FS adaptation rate
+MPR_B_FS = 0.2                  # FS adaptation coupling
+MPR_WJ_FS = 0.01                # FS adaptation jump
+
+# When USE_DIMENSIONAL_PARAMS=True, the simulator computes I_ext_dimensional
+# from the above values using the CSV-loaded K and V_T−V_rest for each cell type.
+# When False, I_ext is passed directly in dimensionless form.
+
+GSYN_SCALE_DIMENSIONAL = 0.5     # scale factor for gsyn_max in dimensional mode
 
 # ============================================================
 # Synapse reversal potentials (dimensional, mV)

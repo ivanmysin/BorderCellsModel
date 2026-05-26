@@ -23,27 +23,96 @@ def _get_neuron_row(neuron_type: str) -> dict:
     return row.iloc[0].to_dict()
 
 
+def get_izhikevich_dimensionless_params(neuron_type: str) -> dict:
+    """Compute dimensionless MPR parameters from CSV Izhikevich 2003 values.
+
+    Returns a dict suitable for IzhikevichMeanField in dimensionless mode:
+        {tau_pop, alpha, a, b, w_jump, Delta_I, I_ext}
+
+    tau_pop and alpha are derived from CSV structural params (Cm, K, V_rest, V_T)
+    using the same formulas as neuraltide's internal conversion.
+    a, b, w_jump, Delta_I, I_ext use config-stable targets with CSV-derived
+    tau_pop scaling where appropriate.
+    """
+    row = _get_neuron_row(neuron_type)
+    is_exc = row.get("E/I", "e").strip() == "e"
+
+    K   = float(row["Izh k"])
+    Vr  = float(row["Izh Vr"])
+    VT  = float(row["Izh Vt"])
+    Cm  = float(row["Izh C"])
+
+    tau_pop = Cm / (K * abs(Vr))
+    alpha   = 1.0 + VT / abs(Vr)
+
+    alpha = max(alpha, config.MPR_ALPHA_MIN)
+    tau_pop = max(tau_pop, config.MPR_TAU_POP_MIN)
+
+    a_tgt = config.MPR_A_RS if is_exc else config.MPR_A_FS
+    b_tgt = config.MPR_B_RS if is_exc else config.MPR_B_FS
+    wj_tgt = config.MPR_WJ_RS if is_exc else config.MPR_WJ_FS
+    ie_tgt = config.I_EXT_DIMENSIONLESS_RS if is_exc else config.I_EXT_DIMENSIONLESS_FS
+
+    return {
+        "tau_pop": tau_pop,
+        "alpha":   alpha,
+        "a":       a_tgt,
+        "b":       b_tgt,
+        "w_jump":  wj_tgt,
+        "Delta_I": config.DELTA_I_DIMENSIONLESS,
+        "I_ext":   ie_tgt,
+    }
+
+
 def get_izhikevich_dimensional_params(neuron_type: str) -> dict:
     """Convert CSV Izhikevich params to neuraltide dimensional MPR params.
 
     Returns: {V_rest, V_T, V_peak, V_reset, Cm, K, A, B, W_jump, Delta_I, I_ext}
+    with values that yield the same dimensionless equivalents as
+    get_izhikevich_dimensionless_params() after neuraltide's internal conversion.
     """
     row = _get_neuron_row(neuron_type)
     is_exc = row.get("E/I", "e").strip() == "e"
-    params = {
-        "V_rest": float(row["Izh Vr"]),
-        "V_T": float(row["Izh Vt"]),
-        "V_peak": float(row["Izh Vpeak"]),
-        "V_reset": float(row["Izh Vmin"]),
-        "Cm": float(row["Izh C"]),
-        "K": float(row["Izh k"]),
-        "A": float(row["Izh a"]),
-        "B": float(row["Izh b"]),
-        "W_jump": float(row["Izh d"]),
-        "Delta_I": config.DELTA_I_DEFAULT,
-        "I_ext": config.I_EXT_DEFAULT_EXC if is_exc else config.I_EXT_DEFAULT_INH,
+
+    Vr  = float(row["Izh Vr"])
+    VT  = float(row["Izh Vt"])
+    Vp  = float(row["Izh Vpeak"])
+    Vmin = float(row["Izh Vmin"])
+    K   = float(row["Izh k"])
+
+    # Compute target dimensionless params
+    dl = get_izhikevich_dimensionless_params(neuron_type)
+    tau_tgt = dl["tau_pop"]
+    alpha_tgt = dl["alpha"]
+
+    # neuraltide conversion:
+    #   tau_pop = Cm / (K * |Vr|)  →  Cm = tau_tgt * K * |Vr|
+    #   alpha   = 1 + V_T / |Vr|  →  V_T = (alpha_tgt - 1) * |Vr|
+    Cm = tau_tgt * K * abs(Vr)
+    VT_eff = (alpha_tgt - 1.0) * abs(Vr)
+
+    k_vr = K * abs(Vr)
+    k_vr2 = k_vr * abs(Vr)
+
+    A = dl["a"] * k_vr / Cm
+    B = dl["b"] * k_vr
+    W_jump = dl["w_jump"] * k_vr2
+    I_ext = dl["I_ext"] * k_vr2
+    Delta_I = dl["Delta_I"] * k_vr2
+
+    return {
+        "V_rest":  Vr,
+        "V_T":     VT_eff,
+        "V_peak":  Vp,
+        "V_reset": Vmin,
+        "Cm":      Cm,
+        "K":       K,
+        "A":       A,
+        "B":       B,
+        "W_jump":  W_jump,
+        "Delta_I": Delta_I,
+        "I_ext":   I_ext,
     }
-    return params
 
 
 def get_synapse_params(src_subregion: str, src_type: str,
@@ -82,7 +151,6 @@ def get_synapse_params_for_connection(conn_key: str) -> dict:
         raise ValueError(f"Unknown connection key: {conn_key}")
     result = get_synapse_params(*key)
     if result is None:
-        # fallback to defaults
         if "Basket" in conn_key or "Axoaxonic" in conn_key:
             if "Exc" in conn_key or "Pyramidal" in conn_key or "Input" in conn_key:
                 result = config.TM_SYN_DEFAULTS["Inh→Exc"]
