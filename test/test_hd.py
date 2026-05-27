@@ -46,9 +46,10 @@ def test_hd(save_dir="results/tests"):
         rates_hd.append(r.numpy())
     rates_hd = np.concatenate(rates_hd, axis=0)[:len(t)]
 
+    print(rates_hd.shape)
+
     hd_x = rates_hd[:, 0]
-    hd_y = rates_hd[:, 1]
-    hd_magnitude = np.sqrt(hd_x**2 + hd_y**2)
+    hd_y = rates_hd[:, 9]
 
     # Generator computes 18 HD cell rates, output is first 2 columns (pref=0°, 20°)
     fmax = config.HD_POPVEC["f_max_hd"]
@@ -75,47 +76,37 @@ def test_hd(save_dir="results/tests"):
     ax.set_ylabel('Rate (Hz)')
     ax.legend(fontsize=7)
 
-    # 2. HD magnitude over time
-    ax = axes[0, 1]
-    ax.plot(t[:n_show], hd_magnitude[:n_show], linewidth=0.5, color='C2')
-    ax.set_title('|HD_vec| magnitude')
-    ax.set_xlabel('Time (s)')
-    ax.set_ylabel('Magnitude')
 
-    # 3. Activity map — HD_x
-    plt.sca(axes[0, 2])
-    idx = min(len(x), len(hd_x))
-    plot_activity_map(
-        x[:idx], y[:idx], hd_x[:idx],
-        title="HD_vec x-component", cmap="coolwarm",
-        vmin=-hd_magnitude.max(), save_path=None,
-    )
+    ax = axes[0, 1]
+
+
+
+
     plt.sca(axes[0, 0])
 
-    # 4. HD_x vs head direction
-    ax = axes[1, 0]
-    plot_hd_response(fig, ax, hd[:idx], hd_x[:idx],
-                     title="HD_x vs head direction")
+    # # 4. HD_x vs head direction
+    # ax = axes[1, 0]
+    # plot_hd_response(fig, ax, hd[:idx], hd_x[:idx],
+    #                  title="HD_x vs head direction")
 
-    # 5. HD_y vs head direction
-    ax = axes[1, 1]
-    plot_hd_response(fig, ax, hd[:idx], hd_y[:idx],
-                     title="HD_y vs head direction")
-
-    # 6. Polar plot: HD vector
-    ax = axes[1, 2]
-    ax = fig.add_subplot(2, 3, 6, projection='polar')
-    theta_bins = np.linspace(-np.pi, np.pi, 72)
-    mag_bins = np.zeros_like(theta_bins, dtype=float)
-    cos_pref_all = np.cos(theta_pref_rad)
-    sin_pref_all = np.sin(theta_pref_rad)
-    for i, th in enumerate(theta_bins):
-        r_hd = fmax * np.exp(kappa * (np.cos(th - theta_pref_rad) - 1.0))
-        ex = np.sum(r_hd * cos_pref_all)
-        ey = np.sum(r_hd * sin_pref_all)
-        mag_bins[i] = np.sqrt(ex**2 + ey**2)
-    ax.plot(theta_bins, mag_bins, 'C2', linewidth=2)
-    ax.set_title('|HD_vec| vs direction (theoretical)')
+    # # 5. HD_y vs head direction
+    # ax = axes[1, 1]
+    #
+    #
+    # # 6. Polar plot: HD vector
+    # ax = axes[1, 2]
+    # ax = fig.add_subplot(2, 3, 6, projection='polar')
+    # theta_bins = np.linspace(-np.pi, np.pi, 72)
+    # mag_bins = np.zeros_like(theta_bins, dtype=float)
+    # cos_pref_all = np.cos(theta_pref_rad)
+    # sin_pref_all = np.sin(theta_pref_rad)
+    # for i, th in enumerate(theta_bins):
+    #     r_hd = fmax * np.exp(kappa * (np.cos(th - theta_pref_rad) - 1.0))
+    #     ex = np.sum(r_hd * cos_pref_all)
+    #     ey = np.sum(r_hd * sin_pref_all)
+    #     mag_bins[i] = np.sqrt(ex**2 + ey**2)
+    # ax.plot(theta_bins, mag_bins, 'C2', linewidth=2)
+    # ax.set_title('|HD_vec| vs direction (theoretical)')
 
     plt.suptitle('HDPopVecGenerator Test', fontsize=14, y=1.01)
     plt.tight_layout()
