@@ -75,14 +75,14 @@ DISTANCE_NEAR = {
 # --- Speed generator ---
 SPEED_CELL = {
     "beta_0": 2.0,              # Hz, baseline firing at zero speed
-    "beta_1": 0.2,              # Hz/(cm/s), speed slope
+    "beta_1": 0.5,              # Hz/(cm/s), speed slope
 }
 
 # --- HD population vector generator ---
 HD_POPVEC = {
     "n_hd": 18,                 # number of HD cells
     "theta_step": 20.0,         # deg, step between preferred directions
-    "f_max_hd": 25.0,           # Hz, peak HD firing rate
+    "f_max_hd": 3.0,           # Hz, peak HD firing rate
     "kappa_hd": 3.0,            # von Mises concentration
 }
 

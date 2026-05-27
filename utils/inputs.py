@@ -102,7 +102,9 @@ class HDPopVecGenerator(BaseInputGenerator):
         super().__init__(params=params, dt=dt, **kwargs)
         dtype = tf.keras.backend.floatx()
         self._kappa = tf.cast(config.KAPPA_HD, dtype=dtype)
-        self._f_max = tf.cast(config.F_MAX_HD, dtype=dtype)
+        self._f_max = tf.cast(config.F_MAX_HD, dtype=dtype) / tf.exp(self._kappa)
+
+
         self._theta_pref_rad = tf.constant(
             [np.deg2rad(th) for th in config.THETA_PREF], dtype=dtype)
 

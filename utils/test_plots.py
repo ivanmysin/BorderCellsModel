@@ -55,6 +55,8 @@ def load_or_generate_trajectory(duration=60.0):
     n_desired = int(duration / dt)
 
     if os.path.exists(config.TRAJECTORY_HDF5):
+        print(f"Loading trajectory from {config.TRAJECTORY_HDF5}")
+
         import h5py
         traj = {}
         with h5py.File(config.TRAJECTORY_HDF5, 'r') as f:
@@ -70,6 +72,7 @@ def load_or_generate_trajectory(duration=60.0):
         traj['t'] = np.arange(n, dtype=np.float32) * dt
         return traj
     else:
+        print("Generating trajectory")
         from utils.trajectory import TrajectoryGenerator
         gen = TrajectoryGenerator(seed=config.RANDOM_SEED)
 

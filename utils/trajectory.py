@@ -51,7 +51,7 @@ class TrajectoryGenerator:
         pos_cm = h["pos"] * 100
         xs = pos_cm[:, 0]
         ys = pos_cm[:, 1]
-        speeds = h["vel"]
+        speeds = h["vel"] * 100
 
         d_N = self.arena_cm - ys
         d_S = ys
