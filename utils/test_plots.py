@@ -45,23 +45,42 @@ def plot_activity_map(x, y, rate, title="Activity map",
 
 
 def load_or_generate_trajectory(duration=60.0):
-    """Load trajectory from HDF5, or generate if not found."""
+    """Load trajectory from HDF5, or generate if not found.
+
+    Returns a dict with keys: x, y, speed, head_direction,
+    d_N, d_S, d_E, d_W, d_min, t.
+    """
     import os
+    dt = config.TRAJECTORY_DT
+    n_desired = int(duration / dt)
+
     if os.path.exists(config.TRAJECTORY_HDF5):
         import h5py
         traj = {}
         with h5py.File(config.TRAJECTORY_HDF5, 'r') as f:
             for k in f.keys():
                 data = f[k][:]
-                # slice for shorter test
-                dt = config.TRAJECTORY_DT
-                n = min(len(data), int(duration / dt))
+                n = min(len(data), n_desired)
                 traj[k] = data[:n]
+        # HDF5 speed is [vx, vy] — compute scalar speed and head_direction
+        vx = traj['speed'][:, 0]
+        vy = traj['speed'][:, 1]
+        traj['head_direction'] = np.arctan2(vy, vx)
+        traj['speed'] = np.sqrt(vx**2 + vy**2)
+        traj['t'] = np.arange(n, dtype=np.float32) * dt
         return traj
     else:
         from utils.trajectory import TrajectoryGenerator
         gen = TrajectoryGenerator(seed=config.RANDOM_SEED)
-        return gen.generate(duration)
+
+        traj = gen.generate(duration)
+
+        vx = traj['speed'][:, 0]
+        vy = traj['speed'][:, 1]
+        traj['head_direction'] = np.arctan2(vy, vx)
+        traj['speed'] = np.sqrt(vx**2 + vy**2)
+        traj['t'] = np.arange(len(traj['head_direction']), dtype=np.float32) * dt
+        return traj
 
 
 def generate_trajectory_for_test(duration=60.0):

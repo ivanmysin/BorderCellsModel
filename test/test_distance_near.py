@@ -19,6 +19,7 @@ from utils.test_plots import (set_test_style, plot_activity_map,
                                plot_distance_response,
                                load_or_generate_trajectory)
 
+from utils.rate_map import build_spatial_maps
 
 def test_distance_near(save_dir="results/tests"):
     os.makedirs(save_dir, exist_ok=True)
@@ -27,12 +28,14 @@ def test_distance_near(save_dir="results/tests"):
     t = traj["t"]
     x = traj["x"]
     y = traj["y"]
-    d_min = traj["d_min"]
 
+    # Build extra_inputs: [x, y, vx, vy]
+    speed = traj["speed"]
+    hd = traj["head_direction"]
     extra = np.stack([
-        traj["d_min"], traj["speed"],
-        np.cos(traj["head_direction"]), np.sin(traj["head_direction"]),
-        traj["d_N"], traj["d_S"], traj["d_E"], traj["d_W"],
+        traj["x"], traj["y"],
+        speed * np.cos(hd),
+        speed * np.sin(hd),
     ], axis=-1).astype(np.float32)
 
     gen = DistanceNearGenerator()
@@ -43,7 +46,12 @@ def test_distance_near(save_dir="results/tests"):
         rates.append(r.numpy())
     rates = np.concatenate(rates)[:len(t)]
 
-    # Validate formula: alpha_near * (d_max - d_min), clipped >= 0
+    # Validate formula: alpha_near * (d_max - d_min(x,y)), clipped >= 0
+    d_N = config.ARENA_CM - y
+    d_S = y
+    d_E = config.ARENA_CM - x
+    d_W = x
+    d_min = np.minimum(np.minimum(d_N, d_S), np.minimum(d_E, d_W))
     a = config.DISTANCE_NEAR["alpha_near"]
     dm = config.DISTANCE_NEAR["d_max"]
     expected = np.maximum(a * (dm - d_min[:len(rates)]), 0)
@@ -75,19 +83,20 @@ def test_distance_near(save_dir="results/tests"):
 
     # 3. Rate vs d_min
     ax = axes[1, 0]
-    idx = min(len(d_min), len(rates))
-    plot_distance_response(fig, ax, d_min[:idx], rates[:idx],
+    plot_distance_response(fig, ax, d_min[:len(rates)], rates,
                            title="d_near vs nearest-wall distance",
                            xlabel="d_min (cm)")
 
-    # 4. Comparison: max rate vs min distance
-    ax = axes[1, 1]
-    ax.plot(d_min[:n_show:10], rates[:n_show:10], '.', markersize=1,
-            alpha=0.3, color='C3')
-    ax.set_xlabel('d_min (cm)')
-    ax.set_ylabel('d_near rate (Hz)')
-    ax.set_title('Rate = f(d_min)')
-    ax.grid(True, alpha=0.3)
+    # 4. Activity map (standalone, clear view)
+
+
+    positions = np.stack([x, y], axis=-1)
+    rate_map, _, _, _ = build_spatial_maps(rates, positions, bins = 50, range_xy=((0, 50), (0, 50)))
+
+    axes[1, 1].imshow(rate_map).set_cmap("rainbow")
+
+
+    plt.sca(axes[0, 0])
 
     plt.suptitle('DistanceNearGenerator Test', fontsize=14, y=1.01)
     plt.tight_layout()

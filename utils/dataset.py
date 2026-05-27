@@ -10,25 +10,17 @@ def trajectory_to_extra_inputs(traj: dict) -> np.ndarray:
     """Convert trajectory dict to extra_inputs array.
 
     extra_inputs columns:
-        0: d_min (cm)
-        1: speed (cm/s)
-        2: cos(head_direction)
-        3: sin(head_direction)
-        4: d_N (cm)
-        5: d_S (cm)
-        6: d_E (cm)
-        7: d_W (cm)
+        0: x (cm)
+        1: y (cm)
+        2: vx = speed * cos(head_direction) (cm/s)
+        3: vy = speed * sin(head_direction) (cm/s)
     """
+    speed = traj["speed"]
     hd = traj["head_direction"]
     extra = np.stack([
-        traj["d_min"],
-        traj["speed"],
-        np.cos(hd),
-        np.sin(hd),
-        traj["d_N"],
-        traj["d_S"],
-        traj["d_E"],
-        traj["d_W"],
+        traj["x"], traj["y"],
+        speed * np.cos(hd),
+        speed * np.sin(hd),
     ], axis=-1)
     return extra
 
@@ -72,10 +64,18 @@ def load_trajectory_from_hdf5(path: str = None, slice_duration: float = None) ->
         for key in f.keys():
             traj[key] = f[key][:]
 
-    if slice_duration is not None and slice_duration < traj["t"][-1]:
-        dt = config.TRAJECTORY_DT
+    # HDF5 speed is [vx, vy] — compute scalar speed and head_direction
+    vx = traj['speed'][:, 0]
+    vy = traj['speed'][:, 1]
+    traj['head_direction'] = np.arctan2(vy, vx)
+    traj['speed'] = np.sqrt(vx**2 + vy**2)
+
+    dt = config.TRAJECTORY_DT
+    total_steps = len(vx)
+    traj['t'] = np.arange(total_steps, dtype=np.float32) * dt
+
+    if slice_duration is not None and slice_duration < traj['t'][-1]:
         slice_steps = int(slice_duration / dt)
-        total_steps = len(traj["t"])
         if slice_steps < total_steps:
             start = np.random.randint(0, total_steps - slice_steps)
             for key in traj:

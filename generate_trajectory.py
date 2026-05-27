@@ -27,10 +27,10 @@ def generate_and_save(duration: float, plot: bool = False):
 
     with h5py.File(config.TRAJECTORY_HDF5, "w") as f:
         for key, arr in traj.items():
-            f.create_dataset(key, data=arr.astype(np.float32), compression="gzip")
+            f.create_dataset(key, data=arr.astype(np.float32))
 
     print(f"Trajectory saved to {config.TRAJECTORY_HDF5}")
-    n_steps = len(traj["t"])
+    n_steps = len(traj["x"])
     print(f"  Duration: {duration:.1f} s, Steps: {n_steps}")
     print(f"  dt: {config.TRAJECTORY_DT:.0f} ms")
     print(f"  d_min range: [{traj['d_min'].min():.1f}, {traj['d_min'].max():.1f}] cm")
@@ -50,7 +50,7 @@ def _plot_trajectory(traj: dict):
 
     x = traj["x"][::10]
     y = traj["y"][::10]
-    t = traj["t"]
+    t = np.arange( len(traj["x"]) ) * config.TRAJECTORY_DT
 
     fig, axes = plt.subplots(2, 2, figsize=(12, 10))
 
@@ -77,20 +77,23 @@ def _plot_trajectory(traj: dict):
     ax.legend(fontsize=7)
 
     # Speed
+    speed = np.sqrt( traj["speed"][:, 0]**2 + traj["speed"][:, 1]**2)
+    head_direction = np.atan2(traj["speed"][:, 1], traj["speed"][:, 0])
+
     ax = axes[1, 0]
-    ax.plot(t, traj["speed"], linewidth=0.5, color="C1")
+    ax.plot(t, speed, linewidth=0.5, color="C1")
     ax.set_title("Speed")
     ax.set_xlabel("Time (s)")
     ax.set_ylabel("Speed (cm/s)")
 
     # Head direction
     ax = axes[1, 1]
-    ax.plot(t, np.rad2deg(traj["head_direction"]), linewidth=0.5, color="C3")
+    ax.plot(t, np.rad2deg(head_direction), linewidth=0.5, color="C3")
     ax.set_title("Head direction")
     ax.set_xlabel("Time (s)")
     ax.set_ylabel("Angle (deg)")
 
-    plt.suptitle(f"Trajectory overview ({traj['t'][-1]:.0f}s)", fontsize=14)
+    plt.suptitle(f"Trajectory overview ({t[-1]:.0f}s)", fontsize=14)
     plt.tight_layout()
     save_path = config.RESULTS_DIR + "/trajectory_preview.png"
     fig.savefig(save_path, bbox_inches="tight", dpi=150)

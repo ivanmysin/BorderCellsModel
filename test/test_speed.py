@@ -29,10 +29,11 @@ def test_speed(save_dir="results/tests"):
     y = traj["y"]
     speed = traj["speed"]
 
+    hd = traj["head_direction"]
     extra = np.stack([
-        traj["d_min"], traj["speed"],
-        np.cos(traj["head_direction"]), np.sin(traj["head_direction"]),
-        traj["d_N"], traj["d_S"], traj["d_E"], traj["d_W"],
+        traj["x"], traj["y"],
+        speed * np.cos(hd),
+        speed * np.sin(hd),
     ], axis=-1).astype(np.float32)
 
     gen = SpeedGenerator()
