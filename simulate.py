@@ -23,27 +23,17 @@ from utils.trajectory import TrajectoryGenerator
 tf.random.set_seed(config.RANDOM_SEED)
 nt.seed_everything(config.RANDOM_SEED)
 
+from pprint import pprint
+
 # ============================================================
 # Population parameters (from CSV)
 # ============================================================
 
-def _rs_params_for_unit(unit_idx: int) -> dict:
-    """RS dimless params from CSV, with small I_ext perturbation per unit."""
-    p = get_izhikevich_dimensionless_params(config.NEURON_TYPE_MAP["Pyramidal"])
-    rng = np.random.default_rng(unit_idx + 42)
-    iext = p["I_ext"] + rng.normal(0, 0.05)
-    p["I_ext"] = max(0.01, iext)
+def get_pop_params_by_name(pop_name: str) -> dict:
+    p = get_izhikevich_dimensionless_params(config.NEURON_TYPE_MAP[pop_name])
+
     return p
 
-
-def _fs_params() -> dict:
-    """FS dimless params from CSV (Basket)."""
-    return get_izhikevich_dimensionless_params(config.NEURON_TYPE_MAP["Basket"])
-
-
-def _axo_params() -> dict:
-    """Axo-axonic dimless params from CSV."""
-    return get_izhikevich_dimensionless_params(config.NEURON_TYPE_MAP["Axoaxonic"])
 
 # ============================================================
 # Synapse parameter helpers
@@ -140,12 +130,21 @@ def build_network() -> NetworkGraph:
 
     # Dynamic populations (dimensionless — computed from CSV)
     for i, name in enumerate(pop_names):
-        if i < 4:
-            params = _rs_params_for_unit(i)
-        elif name == "Basket":
-            params = _fs_params()
-        else:
-            params = _axo_params()
+        pop_name = name
+
+        if 'Border' in pop_name:
+            pop_name = 'Pyramidal'
+
+        if 'Axo' in pop_name:
+            pop_name = 'Axoaxonic'
+
+        params = get_pop_params_by_name(pop_name)
+
+
+
+        print(f'Population {i}: {name}')
+        pprint(params)
+        print("=====" * 10)
         pop = IzhikevichMeanField(dt=dt, params=params, name=name)
         graph.add_population(name=name, model=pop)
 
@@ -279,25 +278,28 @@ class SimulationRunner:
 
     def __init__(self):
         self.graph = build_network()
-        self.integrator = build_integrator()
-        self.net_rnn = NetworkRNN(
-            self.graph,
-            self.integrator,
-            return_hidden_states=False,
-        )
-        self.optimizer = tf.keras.optimizers.Adam(
-            learning_rate=config.LEARNING_RATE
-        )
-        self.traj_gen = TrajectoryGenerator(seed=config.RANDOM_SEED)
 
-        self._use_hdf5 = os.path.exists(config.TRAJECTORY_HDF5)
 
-        self.loss_history = []
-        self.mse_history = []
-        self.fr_history = []
-        self.sp_history = []
-
-        os.makedirs(config.RESULTS_DIR, exist_ok=True)
+        # !!!
+        # self.integrator = build_integrator()
+        # self.net_rnn = NetworkRNN(
+        #     self.graph,
+        #     self.integrator,
+        #     return_hidden_states=False,
+        # )
+        # self.optimizer = tf.keras.optimizers.Adam(
+        #     learning_rate=config.LEARNING_RATE
+        # )
+        # self.traj_gen = TrajectoryGenerator(seed=config.RANDOM_SEED)
+        #
+        # self._use_hdf5 = os.path.exists(config.TRAJECTORY_HDF5)
+        #
+        # self.loss_history = []
+        # self.mse_history = []
+        # self.fr_history = []
+        # self.sp_history = []
+        #
+        # os.makedirs(config.RESULTS_DIR, exist_ok=True)
 
     def _get_batch(self, duration: float) -> dict:
         """Get a training batch from HDF5 or generate on the fly."""
@@ -422,20 +424,22 @@ def main():
     if use_hdf5:
         print(f"  Using trajectory from {config.TRAJECTORY_HDF5}")
     runner = SimulationRunner()
-    print(f"Network built: {len(runner.graph.population_names)} populations, "
-          f"{len(runner.graph.synapse_names)} synapses")
-    print(f"Trainable parameters: "
-          f"{np.sum([np.prod(v.shape) for v in runner.net_rnn.trainable_variables])}")
-    print(f"Training for {config.N_TRIALS} trials × {config.TRIAL_DURATION}s...")
-    runner.train()
 
-    print("Running final simulation...")
-    batch = runner._get_batch(config.TRIAL_DURATION * 2)
-    rates = runner.simulate(batch['t_seq'], batch['extra_seq'])
-    np.savez(os.path.join(config.RESULTS_DIR, 'final_simulation.npz'),
-             **rates, t_seq=batch['t_seq'], traj_arr=batch['traj'],
-             targets=batch['targets'])
-    print("Done.")
+
+    # print(f"Network built: {len(runner.graph.population_names)} populations, "
+    #       f"{len(runner.graph.synapse_names)} synapses")
+    # print(f"Trainable parameters: "
+    #       f"{np.sum([np.prod(v.shape) for v in runner.net_rnn.trainable_variables])}")
+    # print(f"Training for {config.N_TRIALS} trials × {config.TRIAL_DURATION}s...")
+    # runner.train()
+    #
+    # print("Running final simulation...")
+    # batch = runner._get_batch(config.TRIAL_DURATION * 2)
+    # rates = runner.simulate(batch['t_seq'], batch['extra_seq'])
+    # np.savez(os.path.join(config.RESULTS_DIR, 'final_simulation.npz'),
+    #          **rates, t_seq=batch['t_seq'], traj_arr=batch['traj'],
+    #          targets=batch['targets'])
+    # print("Done.")
 
 
 if __name__ == '__main__':

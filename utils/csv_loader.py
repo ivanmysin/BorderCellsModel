@@ -42,25 +42,25 @@ def get_izhikevich_dimensionless_params(neuron_type: str) -> dict:
     VT  = float(row["Izh Vt"])
     Cm  = float(row["Izh C"])
 
-    tau_pop = Cm / (K * abs(Vr))
+    i_coeff =  1 /  (K * abs(Vr))
+    tau_pop = Cm * i_coeff
     alpha   = 1.0 + VT / abs(Vr)
 
-    alpha = max(alpha, config.MPR_ALPHA_MIN)
-    tau_pop = max(tau_pop, config.MPR_TAU_POP_MIN)
+    a = tau_pop * float(row["Izh a"])
+    b = float(row["Izh b"]) * i_coeff
+    w_jump = float(row["Izh d"]) * i_coeff
 
-    a_tgt = config.MPR_A_RS if is_exc else config.MPR_A_FS
-    b_tgt = config.MPR_B_RS if is_exc else config.MPR_B_FS
-    wj_tgt = config.MPR_WJ_RS if is_exc else config.MPR_WJ_FS
-    ie_tgt = config.I_EXT_DIMENSIONLESS_RS if is_exc else config.I_EXT_DIMENSIONLESS_FS
+    delta_I = 0.15 * Cm
+
 
     return {
         "tau_pop": tau_pop,
         "alpha":   alpha,
-        "a":       a_tgt,
-        "b":       b_tgt,
-        "w_jump":  wj_tgt,
-        "Delta_I": config.DELTA_I_DIMENSIONLESS,
-        "I_ext":   ie_tgt,
+        "a":       a,
+        "b":       b,
+        "w_jump":  w_jump,
+        "Delta_I": delta_I,
+        "I_ext":   0.5,
     }
 
 
