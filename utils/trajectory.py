@@ -51,7 +51,9 @@ class TrajectoryGenerator:
         pos_cm = h["pos"] * 100
         xs = pos_cm[:, 0]
         ys = pos_cm[:, 1]
-        speeds = h["vel"] * 100
+        vel_cms = h["vel"] * 100
+        vx = vel_cms[:, 0]
+        vy = vel_cms[:, 1]
 
         d_N = self.arena_cm - ys
         d_S = ys
@@ -59,13 +61,16 @@ class TrajectoryGenerator:
         d_W = xs
         d_min = np.minimum(np.minimum(d_N, d_S), np.minimum(d_E, d_W))
 
-
+        t = np.arange(n_steps) * self.dt
+        head_direction = np.arctan2(vy, vx)
 
         return {
             "x": xs, "y": ys,
-            "speed": speeds,
+            "speed": np.sqrt(vx**2 + vy**2),
+            "vx": vx, "vy": vy,
+            "head_direction": head_direction,
             "d_N": d_N, "d_S": d_S, "d_E": d_E, "d_W": d_W,
-            "d_min": d_min,
+            "d_min": d_min, "t": t,
         }
 
 

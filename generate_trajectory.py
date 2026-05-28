@@ -78,7 +78,7 @@ def _plot_trajectory(traj: dict):
 
     # Speed
     speed = np.sqrt( traj["speed"][:, 0]**2 + traj["speed"][:, 1]**2)
-    head_direction = np.atan2(traj["speed"][:, 1], traj["speed"][:, 0])
+    head_direction = np.arctan2(traj["speed"][:, 1], traj["speed"][:, 0])
 
     ax = axes[1, 0]
     ax.plot(t, speed, linewidth=0.5, color="C1")

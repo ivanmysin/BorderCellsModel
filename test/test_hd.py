@@ -1,25 +1,22 @@
-"""Test HDPopVecGenerator.
+"""Test HeadDirectionGenerator with N_HD=18 HD cells.
 
-Shows: time dynamics, spatial activity map, HD vector components,
-firing rate vs head direction for each of the 2 components.
+Shows: time dynamics for 2 example cells (0° and 180°),
+spatial activity map, HD tuning for all cells, and a polar plot.
 """
-
 import os
 import sys
+import numpy as np
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import numpy as np
 import matplotlib.pyplot as plt
 import tensorflow as tf
 import config
 
 tf.get_logger().setLevel("ERROR")
 
-from utils.inputs import HDPopVecGenerator
-from utils.test_plots import (set_test_style, plot_activity_map,
-                               plot_hd_response,
-                               load_or_generate_trajectory)
-from utils.rate_map import build_spatial_maps
+from utils.inputs import HeadDirectionGenerator
+from utils.test_plots import (set_test_style, load_or_generate_trajectory)
 
 
 def test_hd(save_dir="results/tests"):
@@ -27,8 +24,6 @@ def test_hd(save_dir="results/tests"):
 
     traj = load_or_generate_trajectory(duration=60.0)
     t = traj["t"]
-    x = traj["x"]
-    y = traj["y"]
     hd = traj["head_direction"]
     speed = traj["speed"]
 
@@ -38,7 +33,7 @@ def test_hd(save_dir="results/tests"):
         speed * np.sin(hd),
     ], axis=-1).astype(np.float32)
 
-    gen = HDPopVecGenerator()
+    gen = HeadDirectionGenerator()
     rates_hd = []
     for i in range(0, len(extra), 100):
         ei = tf.constant(extra[i:i+100])
@@ -46,77 +41,62 @@ def test_hd(save_dir="results/tests"):
         rates_hd.append(r.numpy())
     rates_hd = np.concatenate(rates_hd, axis=0)[:len(t)]
 
-    print(rates_hd.shape)
-
-    hd_x = rates_hd[:, 0]
-    hd_y = rates_hd[:, 9]
-
-    # Generator computes 18 HD cell rates, output is first 2 columns (pref=0°, 20°)
-    fmax = config.HD_POPVEC["f_max_hd"]
-    kappa = config.HD_POPVEC["kappa_hd"]
-    theta_pref_rad = np.deg2rad(config.THETA_PREF)
-    # theta = hd[:len(rates_hd)]
-    # expected_hd_x = fmax * np.exp(kappa * np.cos(theta - theta_pref_rad[0]))
-    # expected_hd_y = fmax * np.exp(kappa * np.cos(theta - theta_pref_rad[1]))
-    # assert np.allclose(hd_x, expected_hd_x, rtol=1e-4), \
-    #     f"HD_x mismatch: max |diff| = {np.max(np.abs(hd_x - expected_hd_x))}"
-    # assert np.allclose(hd_y, expected_hd_y, rtol=1e-4), \
-    #     f"HD_y mismatch: max |diff| = {np.max(np.abs(hd_y - expected_hd_y))}"
+    # Cell 0: preferred direction 0°, cell 9: preferred direction 180°
+    cell_0 = rates_hd[:, 0]
+    cell_9 = rates_hd[:, 9]
 
     set_test_style()
     fig, axes = plt.subplots(2, 3, figsize=(17, 10))
 
-    # 1. Time dynamics — HD_x and HD_y
+    # 1. Time dynamics — two example cells
     ax = axes[0, 0]
     n_show = min(len(t), int(10.0 / config.TRAJECTORY_DT))
-    ax.plot(t[:n_show], hd_x[:n_show], linewidth=0.5, label='HD_x')
-    ax.plot(t[:n_show], hd_y[:n_show], linewidth=0.5, label='HD_y')
-    ax.set_title('HD vector components')
+    ax.plot(t[:n_show], cell_0[:n_show], linewidth=0.5, label='HD cell 0°')
+    ax.plot(t[:n_show], cell_9[:n_show], linewidth=0.5, label='HD cell 180°')
+    ax.set_title('HD cell rates (example cells)')
     ax.set_xlabel('Time (s)')
     ax.set_ylabel('Rate (Hz)')
     ax.legend(fontsize=7)
 
-
+    # 2. HD tuning curves (all 18 cells)
     ax = axes[0, 1]
+    hd_bins = np.linspace(-np.pi, np.pi, 36)
+    theta_pref_rad = np.deg2rad(config.THETA_PREF)
+    for i in range(config.N_HD):
+        cell_rate = rates_hd[:, i]
+        idx = np.digitize(hd[:len(cell_rate)], hd_bins) - 1
+        mask = (idx >= 0) & (idx < len(hd_bins) - 1)
+        mean_rate = np.array([cell_rate[mask & (idx == j)].mean()
+                              for j in range(len(hd_bins) - 1)])
+        ax.plot(np.rad2deg(hd_bins[:-1]), mean_rate,
+                linewidth=0.8, alpha=0.6)
+    ax.set_title('HD tuning (all 18 cells)')
+    ax.set_xlabel('Head direction (deg)')
+    ax.set_ylabel('Rate (Hz)')
 
+    # 3. Polar plot: individual cell tuning
+    ax = axes[0, 2]
+    ax = fig.add_subplot(2, 3, 3, projection='polar')
+    for i in [0, 4, 9, 13]:
+        cell_rate = rates_hd[:, i]
+        idx = np.digitize(hd[:len(cell_rate)], hd_bins) - 1
+        mask = (idx >= 0) & (idx < len(hd_bins) - 1)
+        mean_rate = np.array([cell_rate[mask & (idx == j)].mean()
+                              for j in range(len(hd_bins) - 1)])
+        ax.plot(hd_bins[:-1], mean_rate, linewidth=1.5,
+                label=f'{i * config.HD_POPVEC["theta_step"]:.0f}°')
+    ax.set_title('HD tuning (selected cells)', va='bottom')
+    ax.legend(fontsize=6, loc='lower right')
 
-
-
-    plt.sca(axes[0, 0])
-
-    # # 4. HD_x vs head direction
-    # ax = axes[1, 0]
-    # plot_hd_response(fig, ax, hd[:idx], hd_x[:idx],
-    #                  title="HD_x vs head direction")
-
-    # # 5. HD_y vs head direction
-    # ax = axes[1, 1]
-    #
-    #
-    # # 6. Polar plot: HD vector
-    # ax = axes[1, 2]
-    # ax = fig.add_subplot(2, 3, 6, projection='polar')
-    # theta_bins = np.linspace(-np.pi, np.pi, 72)
-    # mag_bins = np.zeros_like(theta_bins, dtype=float)
-    # cos_pref_all = np.cos(theta_pref_rad)
-    # sin_pref_all = np.sin(theta_pref_rad)
-    # for i, th in enumerate(theta_bins):
-    #     r_hd = fmax * np.exp(kappa * (np.cos(th - theta_pref_rad) - 1.0))
-    #     ex = np.sum(r_hd * cos_pref_all)
-    #     ey = np.sum(r_hd * sin_pref_all)
-    #     mag_bins[i] = np.sqrt(ex**2 + ey**2)
-    # ax.plot(theta_bins, mag_bins, 'C2', linewidth=2)
-    # ax.set_title('|HD_vec| vs direction (theoretical)')
-
-    plt.suptitle('HDPopVecGenerator Test', fontsize=14, y=1.01)
+    plt.suptitle('HeadDirectionGenerator Test (18 HD cells)', fontsize=14, y=1.01)
     plt.tight_layout()
     save_path = os.path.join(save_dir, 'test_hd.png')
     fig.savefig(save_path, bbox_inches='tight', dpi=150)
     print(f"Saved: {save_path}")
     plt.close(fig)
 
-    print(f"Test passed — HD_x: [{hd_x.min():.1f}, {hd_x.max():.1f}], "
-          f"HD_y: [{hd_y.min():.1f}, {hd_y.max():.1f}]")
+    print(f"Test passed — cell_0: [{cell_0.min():.1f}, {cell_0.max():.1f}], "
+          f"cell_9: [{cell_9.min():.1f}, {cell_9.max():.1f}]")
     return True
 
 

@@ -94,7 +94,7 @@ def prepare_batch(gen: TrajectoryGenerator = None,
 
     Returns:
         t_seq:      [batch, n_steps_neural, 1] time steps (ms)
-        extra_seq:  [batch, n_steps_neural, 8] extra inputs
+        extra_seq:  [batch, n_steps_neural, 4] extra inputs [x, y, vx, vy]
         targets:    [batch, n_steps_neural, 4] target border rates
         traj:       dict of raw trajectory arrays
     """

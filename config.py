@@ -40,6 +40,22 @@ DT = 10 # 0.05 # ms
 ARENA_SIZE = 0.5               # 1×1 m arena
 ARENA_CM = ARENA_SIZE * 100    # 100 cm
 TRAJECTORY_DT = DT * 0.001      # sec RatInABox step
+
+# Single-population unit mapping
+POPULATION_NAME = "border_cells"
+UNIT_NAMES = ["Border_N", "Border_S", "Border_E", "Border_W", "Basket", "Axo"]
+UNIT_IDX = {name: i for i, name in enumerate(UNIT_NAMES)}
+N_UNITS = len(UNIT_NAMES)
+
+# Unit type mapping (for parameter lookup)
+UNIT_TYPE = {
+    "Border_N": "Pyramidal",
+    "Border_S": "Pyramidal",
+    "Border_E": "Pyramidal",
+    "Border_W": "Pyramidal",
+    "Basket": "Basket",
+    "Axo": "Axoaxonic",
+}
 SPEED_MEAN = 0.3               # mean speed m/s = 30 cm/s
 THIGMOTAXIS = 0.6               # wall preference
 RANDOM_SEED = 42

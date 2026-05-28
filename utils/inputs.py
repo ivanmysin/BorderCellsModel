@@ -89,21 +89,21 @@ class SpeedGenerator(BaseInputGenerator):
         return rate
 
 
-class HDPopVecGenerator(BaseInputGenerator):
-    """Head direction population vector (2D, n_units=2).
-    HD_vec = Σ r_HD_i * [cos θ_pref,i, sin θ_pref,i].
-    Receives vx from extra_inputs col 2, vy from col 3 — computes θ = atan2(vy, vx)."""
+class HeadDirectionGenerator(BaseInputGenerator):
+    """Head direction population (n_units=N_HD=18).
+    Each unit is an HD cell with von Mises tuning.
+    Receives vx from extra_inputs col 2, vy from col 3 — computes θ = atan2(vy, vx).
+    Returns firing rates for all N_HD cells, shape [batch, N_HD]."""
 
     def __init__(self, params=None, dt=None, **kwargs):
         if params is None:
-            params = {'_': [0.0, 0.0]}
+            params = {'_': [0.0] * config.N_HD}
         if dt is None:
             dt = config.SIM_DT
         super().__init__(params=params, dt=dt, **kwargs)
         dtype = tf.keras.backend.floatx()
         self._kappa = tf.cast(config.KAPPA_HD, dtype=dtype)
         self._f_max = tf.cast(config.F_MAX_HD, dtype=dtype) / tf.exp(self._kappa)
-
 
         self._theta_pref_rad = tf.constant(
             [np.deg2rad(th) for th in config.THETA_PREF], dtype=dtype)
