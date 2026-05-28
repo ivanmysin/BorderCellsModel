@@ -9,7 +9,7 @@ import argparse
 import numpy as np
 import h5py
 import config
-from utils.trajectory import TrajectoryGenerator
+from utils.trajectory import TrajectoryGenerator, interpolate_trajectory
 
 
 def generate_and_save(duration: float, plot: bool = False):
@@ -21,7 +21,9 @@ def generate_and_save(duration: float, plot: bool = False):
         seed = None
 
     gen = TrajectoryGenerator(seed)
-    traj = gen.generate(duration)
+    traj_coarse = gen.generate(duration)
+    target_dt = config.DT / 1000.0
+    traj = interpolate_trajectory(traj_coarse, target_dt)
 
     os.makedirs(os.path.dirname(config.TRAJECTORY_HDF5), exist_ok=True)
 
@@ -32,7 +34,7 @@ def generate_and_save(duration: float, plot: bool = False):
     print(f"Trajectory saved to {config.TRAJECTORY_HDF5}")
     n_steps = len(traj["x"])
     print(f"  Duration: {duration:.1f} s, Steps: {n_steps}")
-    print(f"  dt: {config.TRAJECTORY_DT:.0f} ms")
+    print(f"  dt: {config.DT:.3f} ms")
     print(f"  d_min range: [{traj['d_min'].min():.1f}, {traj['d_min'].max():.1f}] cm")
     print(f"  x range: [{traj['x'].min():.1f}, {traj['x'].max():.1f}] cm")
     print(f"  y range: [{traj['y'].min():.1f}, {traj['y'].max():.1f}] cm")
@@ -76,9 +78,8 @@ def _plot_trajectory(traj: dict):
     ax.set_ylabel("Distance (cm)")
     ax.legend(fontsize=7)
 
-    # Speed
-    speed = np.sqrt( traj["speed"][:, 0]**2 + traj["speed"][:, 1]**2)
-    head_direction = np.arctan2(traj["speed"][:, 1], traj["speed"][:, 0])
+    speed = np.sqrt(traj["vx"]**2 + traj["vy"]**2)
+    head_direction = np.arctan2(traj["vy"], traj["vx"])
 
     ax = axes[1, 0]
     ax.plot(t, speed, linewidth=0.5, color="C1")

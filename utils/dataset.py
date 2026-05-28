@@ -3,7 +3,7 @@
 import numpy as np
 import h5py
 import config
-from utils.trajectory import TrajectoryGenerator, generate_trajectory_batch
+from utils.trajectory import TrajectoryGenerator, generate_trajectory_batch, interpolate_trajectory
 
 
 def trajectory_to_extra_inputs(traj: dict) -> np.ndarray:
@@ -55,7 +55,7 @@ def make_t_sequence(n_steps: int) -> np.ndarray:
 def load_trajectory_from_hdf5(path: str = None, slice_duration: float = None) -> dict:
     """Load trajectory from HDF5, optionally taking a random slice.
 
-    Returns a dict with keys: x, y, speed, head_direction,
+    Returns a dict with keys: x, y, vx, vy, speed, head_direction,
     d_N, d_S, d_E, d_W, d_min, t — each shape (n_steps,).
     """
     p = path or config.TRAJECTORY_HDF5
@@ -64,20 +64,24 @@ def load_trajectory_from_hdf5(path: str = None, slice_duration: float = None) ->
         for key in f.keys():
             traj[key] = f[key][:]
 
-    # HDF5 speed is [vx, vy] — compute scalar speed and head_direction
-    vx = traj['speed'][:, 0]
-    vy = traj['speed'][:, 1]
-    traj['head_direction'] = np.arctan2(vy, vx)
-    traj['speed'] = np.sqrt(vx**2 + vy**2)
+    if 't' not in traj:
+        total_steps = len(traj.get('vx', traj.get('x', [])))
+        traj['t'] = np.arange(total_steps, dtype=np.float32) * config.TRAJECTORY_DT
 
-    dt = config.TRAJECTORY_DT
-    total_steps = len(vx)
-    traj['t'] = np.arange(total_steps, dtype=np.float32) * dt
+    if 'vx' not in traj and 'vy' not in traj and 'speed' in traj and traj['speed'].ndim == 2:
+        vx = traj['speed'][:, 0]
+        vy = traj['speed'][:, 1]
+        traj['head_direction'] = np.arctan2(vy, vx)
+        traj['speed'] = np.sqrt(vx**2 + vy**2)
+        traj['vx'] = vx
+        traj['vy'] = vy
 
     if slice_duration is not None and slice_duration < traj['t'][-1]:
-        slice_steps = int(slice_duration / dt)
-        if slice_steps < total_steps:
-            start = np.random.randint(0, total_steps - slice_steps)
+        dt_actual = traj['t'][1] - traj['t'][0] if len(traj['t']) > 1 else 1.0
+        slice_steps = int(slice_duration / dt_actual)
+        total = len(traj['t'])
+        if slice_steps < total:
+            start = np.random.randint(0, total - slice_steps)
             for key in traj:
                 traj[key] = traj[key][start:start + slice_steps]
 
@@ -101,8 +105,14 @@ def prepare_batch(gen: TrajectoryGenerator = None,
     up = config.UP_SAMPLE_FACTOR
     dur = duration if duration is not None else config.TRIAL_DURATION
 
+    target_dt = config.DT / 1000.0
     if gen is not None:
-        traj = generate_trajectory_batch(gen, dur, n_trajectories=batch_size)
+        raw = generate_trajectory_batch(gen, dur, n_trajectories=batch_size)
+        interped = []
+        for i in range(batch_size):
+            single = {k: raw[k][i] for k in raw}
+            interped.append(interpolate_trajectory(single, target_dt))
+        traj = {k: np.stack([t[k] for t in interped], axis=0) for k in interped[0]}
     else:
         raw_traj = load_trajectory_from_hdf5(slice_duration=dur)
         traj = {k: v[np.newaxis, ...] for k, v in raw_traj.items()}

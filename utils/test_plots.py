@@ -51,8 +51,6 @@ def load_or_generate_trajectory(duration=60.0):
     d_N, d_S, d_E, d_W, d_min, t.
     """
     import os
-    dt = config.TRAJECTORY_DT
-    n_desired = int(duration / dt)
 
     if os.path.exists(config.TRAJECTORY_HDF5):
         print(f"Loading trajectory from {config.TRAJECTORY_HDF5}")
@@ -62,27 +60,50 @@ def load_or_generate_trajectory(duration=60.0):
         with h5py.File(config.TRAJECTORY_HDF5, 'r') as f:
             for k in f.keys():
                 data = f[k][:]
-                n = min(len(data), n_desired)
+                n = len(data)
                 traj[k] = data[:n]
-        # HDF5 speed is [vx, vy] — compute scalar speed and head_direction
-        vx = traj['speed'][:, 0]
-        vy = traj['speed'][:, 1]
-        traj['head_direction'] = np.arctan2(vy, vx)
-        traj['speed'] = np.sqrt(vx**2 + vy**2)
-        traj['t'] = np.arange(n, dtype=np.float32) * dt
+
+        if 't' in traj:
+            actual_dt = traj['t'][1] - traj['t'][0] if len(traj['t']) > 1 else config.TRAJECTORY_DT
+        else:
+            actual_dt = config.TRAJECTORY_DT
+
+        n_desired = int(duration / actual_dt)
+        n = min(len(traj.get('x', [])), n_desired)
+        for k in traj:
+            traj[k] = traj[k][:n]
+
+        if 'vx' in traj and 'vy' in traj:
+            pass
+        elif 'speed' in traj and traj['speed'].ndim == 2:
+            vx = traj['speed'][:, 0]
+            vy = traj['speed'][:, 1]
+            traj['head_direction'] = np.arctan2(vy, vx)
+            traj['speed'] = np.sqrt(vx**2 + vy**2)
+            traj['vx'] = vx
+            traj['vy'] = vy
+
+        if 't' not in traj:
+            traj['t'] = np.arange(n, dtype=np.float32) * actual_dt
+
         return traj
     else:
         print("Generating trajectory")
-        from utils.trajectory import TrajectoryGenerator
+        from utils.trajectory import TrajectoryGenerator, interpolate_trajectory
         gen = TrajectoryGenerator(seed=config.RANDOM_SEED)
 
-        traj = gen.generate(duration)
+        raw = gen.generate(duration)
+        target_dt = config.DT / 1000.0
+        traj = interpolate_trajectory(raw, target_dt)
 
-        vx = traj['speed'][:, 0]
-        vy = traj['speed'][:, 1]
-        traj['head_direction'] = np.arctan2(vy, vx)
-        traj['speed'] = np.sqrt(vx**2 + vy**2)
-        traj['t'] = np.arange(len(traj['head_direction']), dtype=np.float32) * dt
+        n_desired = int(duration / target_dt)
+        n = min(len(traj.get('x', [])), n_desired)
+        for k in traj:
+            traj[k] = traj[k][:n]
+
+        if 't' not in traj:
+            traj['t'] = np.arange(n, dtype=np.float32) * target_dt
+
         return traj
 
 

@@ -15,6 +15,8 @@ import config
 from utils.csv_loader import (
     get_synapse_params_for_connection,
     get_izhikevich_dimensionless_params,
+    get_neuron_ei,
+    get_neuron_vr,
 )
 from utils.inputs import DistanceFarGenerator, DistanceNearGenerator, SpeedGenerator, HeadDirectionGenerator
 from utils.dataset import prepare_batch
@@ -55,8 +57,8 @@ def _make_pconn_mask(n_pre: int, n_post: int,
 # Synapse parameter helpers
 # ============================================================
 
-def _make_ts_params(conn_key: str, n_pre: int, n_post: int) -> dict:
-    """Build TsodyksMarkram parameter dict from CSV or defaults."""
+def _make_ts_params_dict(conn_key: str, n_pre: int, n_post: int) -> dict:
+    """Build TsodyksMarkram params with trainable flags and e_r."""
     try:
         csv_params = get_synapse_params_for_connection(conn_key)
         g = csv_params['gsyn_max']
@@ -72,61 +74,53 @@ def _make_ts_params(conn_key: str, n_pre: int, n_post: int) -> dict:
         g, td, tr, tf_val, u = d['gsyn_max'], d['tau_d'], d['tau_r'], d['tau_f'], d['Uinc']
 
     g_scaled = g * config.GSYN_SCALE_DIMENSIONAL
+    base_g_perturbed = g_scaled * (1.0 + tf.random.uniform([], -0.3, 0.3).numpy())
 
-    if conn_key.startswith('Input') or 'Pyramidal' in conn_key.split('→')[0]:
-        e_r = 1.0
+    pre_short, post_short = conn_key.split('→')
+    if pre_short == 'Input':
+        csv_tuple = config.SYNAPSE_TYPE_MAP.get(conn_key)
+        pre_csv = csv_tuple[1] if csv_tuple else "CA1 Back-Projection"
     else:
-        e_r = -0.1
+        pre_csv = config.NEURON_TYPE_MAP[pre_short]
+    post_csv = config.NEURON_TYPE_MAP[post_short]
 
-    return {
-        'gsyn_max': g_scaled,
-        'tau_f': float(tf_val),
-        'tau_d': float(td),
-        'tau_r': float(tr),
-        'Uinc': float(u),
-        'pconn': 1.0,
-        'e_r': e_r,
-    }
+    pre_ei = get_neuron_ei(pre_csv)
+    E_r = 0.0 if pre_ei == 'e' else -75.0
+    Vr_post = get_neuron_vr(post_csv)
+    e_r = 1.0 + E_r / abs(Vr_post)
 
-
-def _make_ts_params_dict(conn_key: str, n_pre: int, n_post: int) -> dict:
-    """Build TsodyksMarkram params with trainable flags."""
-    p = _make_ts_params(conn_key, n_pre, n_post)
-    # Add small random perturbation to break symmetry between populations
-    base_g = p['gsyn_max']
-    g_perturbed = base_g * (1.0 + tf.random.uniform([], -0.3, 0.3).numpy())
     return {
         'gsyn_max': {
-            'value': max(0.001, g_perturbed),
+            'value': max(0.001, base_g_perturbed),
             'trainable': config.TRAIN_SYNAPSE_GMAX,
             'min': 0.0,
         },
         'tau_f': {
-            'value': p['tau_f'],
+            'value': float(tf_val),
             'trainable': config.TRAIN_SYNAPSE_TAU,
             'min': 1.0,
         },
         'tau_d': {
-            'value': p['tau_d'],
+            'value': float(td),
             'trainable': config.TRAIN_SYNAPSE_TAU,
             'min': 1.0,
         },
         'tau_r': {
-            'value': p['tau_r'],
+            'value': float(tr),
             'trainable': config.TRAIN_SYNAPSE_TAU,
             'min': 1.0,
         },
         'Uinc': {
-            'value': p['Uinc'],
+            'value': float(u),
             'trainable': config.TRAIN_SYNAPSE_U,
             'min': 0.0, 'max': 1.0,
         },
         'pconn': {
-            'value': p['pconn'],
+            'value': 1.0,
             'trainable': False,
         },
         'e_r': {
-            'value': p['e_r'],
+            'value': e_r,
             'trainable': False,
         },
     }

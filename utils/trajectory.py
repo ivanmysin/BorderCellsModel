@@ -74,6 +74,49 @@ class TrajectoryGenerator:
         }
 
 
+def interpolate_trajectory(traj: dict, target_dt: float) -> dict:
+    """Linearly interpolate trajectory to a finer time resolution.
+
+    x, y are linearly interpolated. vx, vy are step-constant (velocity of
+    the coarse segment's left edge). d_* are recomputed from interpolated x, y.
+
+    Args:
+        traj: dict at config.TRAJECTORY_DT resolution (keys: x, y, vx, vy,
+              d_N, d_S, d_E, d_W, d_min, speed, head_direction, t)
+        target_dt: desired time step in seconds
+
+    Returns:
+        dict with same keys at target_dt resolution
+    """
+    old_t = traj["t"]
+    total_time = old_t[-1]
+    n_new = int(round(total_time / target_dt)) + 1
+    new_t = np.arange(n_new, dtype=np.float64) * target_dt
+
+    out = {}
+    out["x"] = np.interp(new_t, old_t, traj["x"])
+    out["y"] = np.interp(new_t, old_t, traj["y"])
+
+    idx = np.searchsorted(old_t, new_t, side="right") - 1
+    idx = np.clip(idx, 0, len(old_t) - 1)
+    out["vx"] = traj["vx"][idx]
+    out["vy"] = traj["vy"][idx]
+
+    arena = config.ARENA_CM
+    out["d_N"] = arena - out["y"]
+    out["d_S"] = out["y"]
+    out["d_E"] = arena - out["x"]
+    out["d_W"] = out["x"]
+
+    out["t"] = new_t
+    out["d_min"] = np.minimum(np.minimum(out["d_N"], out["d_S"]),
+                              np.minimum(out["d_E"], out["d_W"]))
+    out["head_direction"] = np.arctan2(out["vy"], out["vx"])
+    out["speed"] = np.sqrt(out["vx"]**2 + out["vy"]**2)
+
+    return out
+
+
 def generate_trajectory_batch(gen: TrajectoryGenerator,
                                duration: float,
                                n_trajectories: int = 1) -> dict:

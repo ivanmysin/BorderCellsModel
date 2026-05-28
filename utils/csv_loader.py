@@ -60,7 +60,7 @@ def get_izhikevich_dimensionless_params(neuron_type: str) -> dict:
         "b":       b,
         "w_jump":  w_jump,
         "Delta_I": delta_I,
-        "I_ext":   0.5,
+        "I_ext":   0.1,
     }
 
 
@@ -113,6 +113,18 @@ def get_izhikevich_dimensional_params(neuron_type: str) -> dict:
         "Delta_I": Delta_I,
         "I_ext":   I_ext,
     }
+
+
+def get_neuron_ei(neuron_type: str) -> str:
+    """Get E/I ('e' or 'i') for a neuron type from CSV."""
+    row = _get_neuron_row(neuron_type)
+    return row["E/I"].strip().lower()
+
+
+def get_neuron_vr(neuron_type: str) -> float:
+    """Get V_rest (mV) for a neuron type from CSV."""
+    row = _get_neuron_row(neuron_type)
+    return float(row["Izh Vr"])
 
 
 def get_synapse_params(src_subregion: str, src_type: str,
