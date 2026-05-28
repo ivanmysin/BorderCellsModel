@@ -28,7 +28,7 @@ UNIT_LABELS = config.UNIT_NAMES
 COLORS = ['C0', 'C1', 'C2', 'C3', 'C4', 'C5']
 
 N_STEPS = 100
-DT_MS = 0.02
+DT_MS = config.DT
 
 
 def _worker(scenario: str):
