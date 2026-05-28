@@ -21,7 +21,9 @@ from utils.test_plots import (set_test_style, plot_activity_map,
 
 from utils.rate_map import build_spatial_maps
 
-def test_distance_near(save_dir="results/tests"):
+def test_distance_near(save_dir=None):
+    if save_dir is None:
+        save_dir = os.path.join(config.RESULTS_DIR, "tests")
     os.makedirs(save_dir, exist_ok=True)
 
     traj = load_or_generate_trajectory(duration=60.0)

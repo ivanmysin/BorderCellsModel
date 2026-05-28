@@ -19,7 +19,9 @@ from utils.inputs import HeadDirectionGenerator
 from utils.test_plots import (set_test_style, load_or_generate_trajectory)
 
 
-def test_hd(save_dir="results/tests"):
+def test_hd(save_dir=None):
+    if save_dir is None:
+        save_dir = os.path.join(config.RESULTS_DIR, "tests")
     os.makedirs(save_dir, exist_ok=True)
 
     traj = load_or_generate_trajectory(duration=60.0)

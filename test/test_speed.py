@@ -20,7 +20,9 @@ from utils.test_plots import (set_test_style, plot_activity_map,
                                load_or_generate_trajectory)
 
 
-def test_speed(save_dir="results/tests"):
+def test_speed(save_dir=None):
+    if save_dir is None:
+        save_dir = os.path.join(config.RESULTS_DIR, "tests")
     os.makedirs(save_dir, exist_ok=True)
 
     traj = load_or_generate_trajectory(duration=60.0)

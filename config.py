@@ -1,12 +1,16 @@
 """Configuration for border cell simulation."""
 
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+
 # ============================================================
-# Paths
+# Paths (project-root-relative via pathlib)
 # ============================================================
-NEURON_PARAMS_CSV = "data/DG_CA2_Sub_CA3_CA1_EC_neuron_parameters06-30-2024_10_52_20.csv"
-SYNAPSE_PARAMS_CSV = "data/DG_CA2_Sub_CA3_CA1_EC_conn_parameters06-30-2024_10_52_20.csv"
-RESULTS_DIR = "results"
-TRAJECTORY_HDF5 = "data/trajectory.h5"  # saved trajectory file
+NEURON_PARAMS_CSV = str(PROJECT_ROOT / "data/DG_CA2_Sub_CA3_CA1_EC_neuron_parameters06-30-2024_10_52_20.csv")
+SYNAPSE_PARAMS_CSV = str(PROJECT_ROOT / "data/DG_CA2_Sub_CA3_CA1_EC_conn_parameters06-30-2024_10_52_20.csv")
+RESULTS_DIR = str(PROJECT_ROOT / "results")
+TRAJECTORY_HDF5 = str(PROJECT_ROOT / "data/trajectory.h5")
 
 # ============================================================
 # CSV → Population mappings

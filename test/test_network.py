@@ -21,7 +21,7 @@ import matplotlib.pyplot as plt
 
 import config
 
-RESULTS_DIR = "results/tests"
+RESULTS_DIR = os.path.join(config.RESULTS_DIR, "tests")
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
 UNIT_LABELS = config.UNIT_NAMES
