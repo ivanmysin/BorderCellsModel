@@ -50,7 +50,7 @@ def get_izhikevich_dimensionless_params(neuron_type: str) -> dict:
     b = float(row["Izh b"]) * i_coeff
     w_jump = float(row["Izh d"]) * i_coeff
 
-    delta_I = 0.15 * Cm
+    delta_I = 0.15 * Cm * i_coeff
 
 
     return {

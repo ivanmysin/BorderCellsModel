@@ -142,9 +142,10 @@ def build_network() -> NetworkGraph:
 
 
 
-        print(f'Population {i}: {name}')
-        pprint(params)
-        print("=====" * 10)
+        # print(f'Population {i}: {name}')
+        # pprint(params)
+        # print("=====" * 10)
+
         pop = IzhikevichMeanField(dt=dt, params=params, name=name)
         graph.add_population(name=name, model=pop)
 
