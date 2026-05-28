@@ -52,10 +52,10 @@ def _worker(scenario: str):
                 np.zeros_like(g._synapses[syn_name].model.gsyn_max.numpy()))
     elif scenario == 'zero_iext':
         pop.I_ext.assign(np.zeros([config.N_UNITS]))
-        pop.Delta_I.assign(np.zeros([config.N_UNITS]))
-        for syn_name in g.synapse_names:
-            g._synapses[syn_name].model.gsyn_max.assign(
-                np.zeros_like(g._synapses[syn_name].model.gsyn_max.numpy()))
+
+        # for syn_name in g.synapse_names:
+        #     g._synapses[syn_name].model.gsyn_max.assign(
+        #         np.zeros_like(g._synapses[syn_name].model.gsyn_max.numpy()))
 
     integrator = build_integrator()
     net = NetworkRNN(g, integrator, return_hidden_states=False)
