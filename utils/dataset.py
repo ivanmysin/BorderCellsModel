@@ -90,11 +90,14 @@ def load_trajectory_from_hdf5(path: str = None, slice_duration: float = None) ->
 
 def prepare_batch(gen: TrajectoryGenerator = None,
                   duration: float = None,
-                  batch_size: int = 1) -> dict:
+                  batch_size: int = 1,
+                  start_step: int = None,
+                  n_steps: int = None) -> dict:
     """Generate trajectory and prepare training batch.
 
     If 'gen' is None, loads from HDF5.
     If 'duration' is None, uses config.TRIAL_DURATION.
+    If start_step and n_steps given, slice the trajectory (HDF5 only).
 
     Returns:
         t_seq:      [batch, n_steps_neural, 1] time steps (ms)
@@ -114,7 +117,10 @@ def prepare_batch(gen: TrajectoryGenerator = None,
             interped.append(interpolate_trajectory(single, target_dt))
         traj = {k: np.stack([t[k] for t in interped], axis=0) for k in interped[0]}
     else:
-        raw_traj = load_trajectory_from_hdf5(slice_duration=dur)
+        raw_traj = load_trajectory_from_hdf5()
+        if start_step is not None and n_steps is not None:
+            end_step = min(start_step + n_steps, len(raw_traj['x']))
+            raw_traj = {k: v[start_step:end_step] for k, v in raw_traj.items()}
         traj = {k: v[np.newaxis, ...] for k, v in raw_traj.items()}
 
     extra = trajectory_to_extra_inputs(traj)

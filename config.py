@@ -72,7 +72,7 @@ UP_SAMPLE_FACTOR = 1            # no upsampling — trajectory already at SIM_DT
 TRIAL_DURATION = 10.0           # 10 s per trial
 N_TRIALS = 180                  # ~30 min total = 180 trials × 10 s
 BATCH_SIZE = 1
-N_BATCHES = N_TRIALS
+N_BATCHES = 100
 LEARNING_RATE = 1e-3
 GRAD_METHOD = "adjoint"        # "adjoint" | "bptt"
 INTEGRATOR = "rk4"            # "euler" | "heun" | "rk4"

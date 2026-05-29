@@ -274,9 +274,6 @@ class SimulationRunner:
         self.optimizer = tf.keras.optimizers.Adam(
             learning_rate=config.LEARNING_RATE
         )
-        self.traj_gen = TrajectoryGenerator(seed=config.RANDOM_SEED)
-
-        self._use_hdf5 = os.path.exists(config.TRAJECTORY_HDF5)
 
         self.loss_history = []
         self.mse_history = []
@@ -285,13 +282,49 @@ class SimulationRunner:
 
         os.makedirs(config.RESULTS_DIR, exist_ok=True)
 
-    def _get_batch(self, duration: float) -> dict:
-        """Get a training batch from HDF5 or generate on the fly."""
-        from utils.dataset import prepare_batch
-        if self._use_hdf5:
-            return prepare_batch(gen=None, duration=duration, batch_size=config.BATCH_SIZE)
+    @staticmethod
+    def precompute_batches(n_batches: int, trial_duration: float, path: str):
+        """Load full trajectory once, split into n_batches sequential slices, save to HDF5."""
+        use_hdf5 = os.path.exists(config.TRAJECTORY_HDF5)
+        gen = None if use_hdf5 else TrajectoryGenerator(seed=config.RANDOM_SEED)
+
+        # compute total steps and steps per batch from trajectory
+        if use_hdf5:
+            with h5py.File(config.TRAJECTORY_HDF5, 'r') as f:
+                total_steps = len(f['x'])
         else:
-            return prepare_batch(self.traj_gen, duration, config.BATCH_SIZE)
+            raw = generate_trajectory_batch(gen, trial_duration, n_trajectories=1)
+            single = {k: raw[k][0] for k in raw}
+            interped = interpolate_trajectory(single, config.DT / 1000.0)
+            total_steps = len(interped['x'])
+
+        steps_per_batch = total_steps // n_batches
+        print(f"Precomputing {n_batches} batches: {steps_per_batch} steps each "
+              f"(total {total_steps} steps)...")
+
+        with h5py.File(path, 'w') as f:
+            for i in range(n_batches):
+                start = i * steps_per_batch
+                batch = prepare_batch(gen, trial_duration, config.BATCH_SIZE,
+                                      start_step=start, n_steps=steps_per_batch)
+                grp = f.create_group(f'batch_{i}')
+                grp.create_dataset('t_seq', data=batch['t_seq'])
+                grp.create_dataset('extra_seq', data=batch['extra_seq'])
+                grp.create_dataset('targets', data=batch['targets'])
+                if (i + 1) % 50 == 0:
+                    print(f"  {i + 1}/{n_batches} batches saved")
+        print(f"  All {n_batches} batches → {path}")
+
+    @staticmethod
+    def load_batch(hdf5_path: str, index: int) -> dict:
+        """Load a single batch from HDF5 by index."""
+        with h5py.File(hdf5_path, 'r') as f:
+            grp = f[f'batch_{index}']
+            return {
+                't_seq': grp['t_seq'][:],
+                'extra_seq': grp['extra_seq'][:],
+                'targets': grp['targets'][:],
+            }
 
     def train_step(self, t_seq: np.ndarray, extra_seq: np.ndarray,
                    targets: np.ndarray) -> dict:
@@ -333,34 +366,39 @@ class SimulationRunner:
         return {'loss': loss.numpy(), 'mse': components['mse'].numpy(),
                 'l_fr': components['l_fr'].numpy(), 'l_sp': components['l_sp'].numpy()}
 
-    def train(self, n_trials: int = None, trial_duration: float = None):
+    def train(self, n_batches: int = None, trial_duration: float = None,
+              batches_path: str = None):
         """Run full training loop."""
-        n_trials = n_trials or config.N_TRIALS
+        n_batches = n_batches or config.N_BATCHES
         trial_duration = trial_duration or config.TRIAL_DURATION
+        batches_path = batches_path or os.path.join(config.RESULTS_DIR, 'training_batches.h5')
 
-        for trial in range(n_trials):
-            batch = self._get_batch(trial_duration)
-            metrics = self.train_step(
-                batch['t_seq'], batch['extra_seq'], batch['targets']
-            )
+        if not os.path.exists(batches_path):
+            self.precompute_batches(n_batches, trial_duration, batches_path)
 
-            self.loss_history.append(float(metrics['loss']))
-            self.mse_history.append(float(metrics['mse']))
-            self.fr_history.append(float(metrics['l_fr']))
-            self.sp_history.append(float(metrics['l_sp']))
-
-            if (trial + 1) % config.PRINT_EVERY_N_TRIALS == 0:
-                print(f"Trial {trial+1:4d}/{n_trials} | "
-                      f"loss={metrics['loss']:.4f} | "
-                      f"mse={metrics['mse']:.4f} | "
-                      f"fr={metrics['l_fr']:.4f} | "
-                      f"sp={metrics['l_sp']:.4f}")
-
-            if (trial + 1) % config.SAVE_EVERY_N_TRIALS == 0:
-                self.save_checkpoint(trial + 1)
-
-        print("Training complete.")
-        self.save_results()
+        # for trial in range(n_batches):
+        #     batch = self.load_batch(batches_path, trial)
+        #     metrics = self.train_step(
+        #         batch['t_seq'], batch['extra_seq'], batch['targets']
+        #     )
+        #
+        #     self.loss_history.append(float(metrics['loss']))
+        #     self.mse_history.append(float(metrics['mse']))
+        #     self.fr_history.append(float(metrics['l_fr']))
+        #     self.sp_history.append(float(metrics['l_sp']))
+        #
+        #     if (trial + 1) % config.PRINT_EVERY_N_TRIALS == 0:
+        #         print(f"Trial {trial+1:4d}/{n_batches} | "
+        #               f"loss={metrics['loss']:.4f} | "
+        #               f"mse={metrics['mse']:.4f} | "
+        #               f"fr={metrics['l_fr']:.4f} | "
+        #               f"sp={metrics['l_sp']:.4f}")
+        #
+        #     if (trial + 1) % config.SAVE_EVERY_N_TRIALS == 0:
+        #         self.save_checkpoint(trial + 1)
+        #
+        # print("Training complete.")
+        # self.save_results()
         return self.loss_history
 
     def simulate(self, t_seq: np.ndarray, extra_seq: np.ndarray) -> dict:
@@ -374,29 +412,28 @@ class SimulationRunner:
         return result
 
     def save_checkpoint(self, trial: int):
-        """Save intermediate results."""
-        path = os.path.join(config.RESULTS_DIR, f'checkpoint_trial_{trial}.npz')
-        np.savez(path,
-                 loss_history=self.loss_history,
-                 mse_history=self.mse_history,
-                 fr_history=self.fr_history,
-                 sp_history=self.sp_history)
+        """Save intermediate results to HDF5."""
+        path = os.path.join(config.RESULTS_DIR, f'checkpoint_trial_{trial}.h5')
+        with h5py.File(path, 'w') as f:
+            f.create_dataset('loss_history', data=np.array(self.loss_history))
+            f.create_dataset('mse_history', data=np.array(self.mse_history))
+            f.create_dataset('fr_history', data=np.array(self.fr_history))
+            f.create_dataset('sp_history', data=np.array(self.sp_history))
 
     def save_results(self):
-        """Save final results."""
-        path = os.path.join(config.RESULTS_DIR, 'results.npz')
-        np.savez(path,
-                 loss_history=self.loss_history,
-                 mse_history=self.mse_history,
-                 fr_history=self.fr_history,
-                 sp_history=self.sp_history)
+        """Save final results to HDF5."""
+        path = os.path.join(config.RESULTS_DIR, 'results.h5')
+        with h5py.File(path, 'w') as f:
+            f.create_dataset('loss_history', data=np.array(self.loss_history))
+            f.create_dataset('mse_history', data=np.array(self.mse_history))
+            f.create_dataset('fr_history', data=np.array(self.fr_history))
+            f.create_dataset('sp_history', data=np.array(self.sp_history))
 
-        trainable_params = self.net_rnn.trainable_variables  # noqa
-        param_dict = {}
-        for v in trainable_params:
-            param_dict[v.name] = v.numpy()
-        param_path = os.path.join(config.RESULTS_DIR, 'trained_params.npz')
-        np.savez(param_path, **param_dict)
+        param_path = os.path.join(config.RESULTS_DIR, 'trained_params.h5')
+        with h5py.File(param_path, 'w') as f:
+            for v in self.net_rnn.trainable_variables:
+                f.create_dataset(v.name.replace(':', '_').replace('/', '_'),
+                                 data=v.numpy())
 
         print(f"Results saved to {config.RESULTS_DIR}/")
 
@@ -412,23 +449,20 @@ def main():
           f"{len(runner.graph.synapse_names)} synapses")
     print(f"Trainable parameters: "
           f"{np.sum([np.prod(v.shape) for v in runner.net_rnn.trainable_variables])}")
-    print(f"Training for {config.N_TRIALS} trials × {config.TRIAL_DURATION}s...")
+    print(f"Training: {config.N_BATCHES} batches × {config.TRIAL_DURATION}s trajectory...")
     runner.train()
 
     print("Running final simulation...")
-    batch = runner._get_batch(config.TRIAL_DURATION * 2)
+    batches_path = os.path.join(config.RESULTS_DIR, 'training_batches.h5')
+    batch = runner.load_batch(batches_path, 0)
     rates = runner.simulate(batch['t_seq'], batch['extra_seq'])
-
-
-
 
     with h5py.File(os.path.join(config.RESULTS_DIR, 'final_simulation.h5'), 'w') as f:
         for key, value in rates.items():
             f.create_dataset(key, data=value)
         f.create_dataset('t_seq', data=batch['t_seq'])
-        f.create_dataset('traj', data=batch['traj'])
         f.create_dataset('targets', data=batch['targets'])
-        print("Done.")
+    print("Done.")
 
 
 if __name__ == '__main__':

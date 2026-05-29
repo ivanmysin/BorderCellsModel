@@ -15,6 +15,7 @@ import argparse
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
+import pandas as pd
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -53,10 +54,6 @@ def _worker(scenario: str):
     elif scenario == 'zero_iext':
         pop.I_ext.assign(np.zeros([config.N_UNITS]))
 
-        # for syn_name in g.synapse_names:
-        #     g._synapses[syn_name].model.gsyn_max.assign(
-        #         np.zeros_like(g._synapses[syn_name].model.gsyn_max.numpy()))
-
     integrator = build_integrator()
     net = NetworkRNN(g, integrator, return_hidden_states=False)
 
@@ -80,6 +77,27 @@ def _worker(scenario: str):
         nan_positions = np.where(np.any(np.isnan(rates[0]), axis=1))[0]
         nan_step = nan_positions[0] if len(nan_positions) > 0 else -1
 
+    # --- Excel save: one file per scenario ---
+    x = extra_seq[0, :, 0]
+    y = extra_seq[0, :, 1]
+    arena = config.ARENA_CM
+    target_N = config.F_MAX_BORDER * np.exp(-(arena - y) / config.LAMBDA_PROX)
+    target_S = config.F_MAX_BORDER * np.exp(-y / config.LAMBDA_PROX)
+    target_E = config.F_MAX_BORDER * np.exp(-(arena - x) / config.LAMBDA_PROX)
+    target_W = config.F_MAX_BORDER * np.exp(-x / config.LAMBDA_PROX)
+
+    excel_path = os.path.join(RESULTS_DIR, f'test_network_{scenario}.xlsx')
+    with pd.ExcelWriter(excel_path, engine='openpyxl') as writer:
+        pd.DataFrame({'time_s': times}).to_excel(writer, sheet_name='time', index=False)
+        for i, name in enumerate(UNIT_LABELS):
+            pd.DataFrame({f'{name}_Hz': rates[0, :, i]}).to_excel(writer, sheet_name=name, index=False)
+        pd.DataFrame({'x_cm': x, 'y_cm': y, 'vx_cms': extra_seq[0, :, 2], 'vy_cms': extra_seq[0, :, 3]}).to_excel(writer, sheet_name='extra_inputs', index=False)
+        pd.DataFrame({'target_N_Hz': target_N, 'target_S_Hz': target_S, 'target_E_Hz': target_E, 'target_W_Hz': target_W}).to_excel(writer, sheet_name='targets', index=False)
+        if has_nan:
+            pd.DataFrame({'nan_step': [nan_step]}).to_excel(writer, sheet_name='nan', index=False)
+    print(f'Excel saved: {excel_path}', flush=True)
+
+    # --- Plot ---
     fig, axes = plt.subplots(6, 1, figsize=(12, 10), sharex=True)
     for i, (label, color) in enumerate(zip(UNIT_LABELS, COLORS)):
         ax = axes[i]
@@ -93,7 +111,7 @@ def _worker(scenario: str):
                        linewidth=0.5, alpha=0.5)
     axes[0].set_title({
         'zero_syn': 'Zero Synaptic Conductances — Isolated Neuron Dynamics',
-        'zero_iext': 'Zero I_ext + Zero Synapses — No Drive (all flat)',
+        'zero_iext': 'Zero I_ext — No Drive (all flat)',
         'default': 'Default Settings — Full Network (pre-existing NaN)',
     }[scenario], fontsize=11)
     axes[-1].set_xlabel('Time (s)', fontsize=9)
