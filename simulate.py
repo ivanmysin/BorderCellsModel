@@ -10,6 +10,7 @@ from neuraltide.core.network import NetworkGraph, NetworkRNN
 from neuraltide.populations import IzhikevichMeanField
 from neuraltide.synapses import TsodyksMarkramSynapse
 from neuraltide.integrators import EulerIntegrator, HeunIntegrator, RK4Integrator
+import h5py
 
 import config
 from utils.csv_loader import (
@@ -417,10 +418,17 @@ def main():
     print("Running final simulation...")
     batch = runner._get_batch(config.TRIAL_DURATION * 2)
     rates = runner.simulate(batch['t_seq'], batch['extra_seq'])
-    np.savez(os.path.join(config.RESULTS_DIR, 'final_simulation.npz'),
-             **rates, t_seq=batch['t_seq'], traj=batch['traj'],
-             targets=batch['targets'])
-    print("Done.")
+
+
+
+
+    with h5py.File(os.path.join(config.RESULTS_DIR, 'final_simulation.h5'), 'w') as f:
+        for key, value in rates.items():
+            f.create_dataset(key, data=value)
+        f.create_dataset('t_seq', data=batch['t_seq'])
+        f.create_dataset('traj', data=batch['traj'])
+        f.create_dataset('targets', data=batch['targets'])
+        print("Done.")
 
 
 if __name__ == '__main__':

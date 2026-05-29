@@ -27,7 +27,7 @@ os.makedirs(RESULTS_DIR, exist_ok=True)
 UNIT_LABELS = config.UNIT_NAMES
 COLORS = ['C0', 'C1', 'C2', 'C3', 'C4', 'C5']
 
-N_STEPS = 100
+N_STEPS = 10000
 DT_MS = config.DT
 
 
