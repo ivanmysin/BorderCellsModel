@@ -115,3 +115,55 @@ class HeadDirectionGenerator(BaseInputGenerator):
         rate_hd = self._f_max * tf.exp(
             self._kappa * tf.cos(theta - self._theta_pref_rad))
         return rate_hd
+
+
+def precompute_inputs(traj: dict) -> np.ndarray:
+    """Precompute all input channels from trajectory data.
+
+    Uses the same formulas as the generator classes but implemented as
+    vectorized NumPy for efficient batch precomputation.
+
+    Args:
+        traj: trajectory dict with keys x, y, vx, vy, speed, head_direction, etc.
+
+    Returns:
+        np.ndarray of shape [n_steps, N_INPUTS] with input rates in Hz.
+        Columns: [d_far, d_near, speed, HD_0..HD_17]
+    """
+    n_steps = len(traj['x'])
+    x = traj['x']
+    y = traj['y']
+    speed = traj['speed']
+    hd = traj['head_direction']
+
+    # Distance to nearest wall (same as BaseDistanceGenerator._compute_d_min)
+    arena = config.ARENA_CM
+    d_N = arena - y
+    d_S = y
+    d_E = arena - x
+    d_W = x
+    d_min = np.minimum(np.minimum(d_N, d_S), np.minimum(d_E, d_W))
+
+    # d_far: same formula as DistanceFarGenerator
+    d_far = config.ALPHA_FAR * d_min
+
+    # d_near: same formula as DistanceNearGenerator
+    d_near = config.ALPHA_NEAR * (config.D_MAX - d_min)
+    d_near = np.maximum(d_near, 0.0)
+
+    # speed: same formula as SpeedGenerator
+    speed_rate = config.BETA_0 + config.BETA_1 * speed
+
+    # HD: same formula as HeadDirectionGenerator
+    theta_pref_rad = np.deg2rad(config.THETA_PREF)  # [18]
+    theta = hd[:, np.newaxis]  # [n_steps, 1]
+    kappa = config.KAPPA_HD
+    f_max = config.F_MAX_HD / np.exp(kappa)
+    hd_rates = f_max * np.exp(kappa * np.cos(theta - theta_pref_rad))  # [n_steps, 18]
+
+    return np.column_stack([
+        d_far.reshape(n_steps, 1),
+        d_near.reshape(n_steps, 1),
+        speed_rate.reshape(n_steps, 1),
+        hd_rates,
+    ]).astype(np.float32)

@@ -139,3 +139,93 @@ def prepare_batch(gen: TrajectoryGenerator = None,
         "targets": targets.astype(np.float32),
         "traj": traj,
     }
+
+
+def prepare_batches(inputs: np.ndarray, targets: np.ndarray,
+                    batch_duration: float = None, dt: float = None) -> list:
+    """Split precomputed inputs and targets into sequential batches.
+
+    Args:
+        inputs:  [n_steps, N_INPUTS] precomputed input rates
+        targets: [n_steps, 4] precomputed target rates
+        batch_duration: seconds per batch (default from config)
+        dt: neural timestep in ms (default from config)
+
+    Returns:
+        list of dicts, each with keys: t_seq, inputs, targets
+    """
+    bd = batch_duration if batch_duration is not None else config.BATCH_DURATION
+    dt_ms = dt if dt is not None else config.DT
+    batch_steps = int(bd / (dt_ms / 1000.0))
+    n_steps = inputs.shape[0]
+    n_batches = n_steps // batch_steps
+
+    batches = []
+    for i in range(n_batches):
+        start = i * batch_steps
+        end = start + batch_steps
+        t_seq = np.arange(batch_steps, dtype=np.float32) * dt_ms
+        t_seq = t_seq.reshape(1, -1, 1)
+        batches.append({
+            't_seq': t_seq,
+            'inputs': inputs[start:end][np.newaxis, :, :].astype(np.float32),
+            'targets': targets[start:end][np.newaxis, :, :].astype(np.float32),
+        })
+    return batches
+
+
+def save_dataset_hdf5(path: str, batches: list, metadata: dict = None):
+    """Save dataset batches to HDF5.
+
+    Args:
+        path: output HDF5 file path
+        batches: list of dicts from prepare_batches
+        metadata: optional dict of metadata to save
+    """
+    with h5py.File(path, 'w') as f:
+        ds_grp = f.create_group('dataset')
+        ds_grp.attrs['n_batches'] = len(batches)
+        ds_grp.attrs['batch_steps'] = batches[0]['t_seq'].shape[1] if batches else 0
+        ds_grp.attrs['dt'] = config.DT
+        ds_grp.attrs['arena_cm'] = config.ARENA_CM
+
+        if metadata:
+            for k, v in metadata.items():
+                if isinstance(v, (int, float, str)):
+                    ds_grp.attrs[k] = v
+
+        for i, batch in enumerate(batches):
+            grp = ds_grp.create_group(f'batch_{i}')
+            grp.create_dataset('t_seq', data=batch['t_seq'])
+            grp.create_dataset('inputs', data=batch['inputs'])
+            grp.create_dataset('targets', data=batch['targets'])
+
+
+def load_dataset_hdf5(path: str) -> dict:
+    """Load dataset from HDF5.
+
+    Returns:
+        dict with keys:
+            metadata: dict of attributes
+            n_batches: number of batches
+            get_batch(i): function to load batch i
+    """
+    f = h5py.File(path, 'r')
+    ds = f['dataset']
+    metadata = dict(ds.attrs)
+    n_batches = int(ds.attrs['n_batches'])
+
+    def get_batch(i: int) -> dict:
+        grp = ds[f'batch_{i}']
+        return {
+            't_seq': grp['t_seq'][:],
+            'inputs': grp['inputs'][:],
+            'targets': grp['targets'][:],
+        }
+
+    return {
+        'file': f,
+        'metadata': metadata,
+        'n_batches': n_batches,
+        'get_batch': get_batch,
+    }

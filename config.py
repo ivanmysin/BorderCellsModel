@@ -37,7 +37,7 @@ SYNAPSE_TYPE_MAP = {
 }
 
 # ========================================================
-DT = 0.05 # ms
+DT = 0.1  # ms (neural simulation timestep)
 # ============================================================
 # Arena & Trajectory (RatInABox)
 # ============================================================
@@ -67,7 +67,7 @@ RANDOM_SEED = 42
 # ============================================================
 # Training parameters
 # ============================================================
-SIM_DT = DT                     # 1 ms neural timestep
+SIM_DT = DT                     # neural timestep
 UP_SAMPLE_FACTOR = 1            # no upsampling — trajectory already at SIM_DT
 TRIAL_DURATION = 10.0           # 10 s per trial
 N_TRIALS = 180                  # ~30 min total = 180 trials × 10 s
@@ -76,6 +76,20 @@ N_BATCHES = 100
 LEARNING_RATE = 1e-3
 GRAD_METHOD = "adjoint"        # "adjoint" | "bptt"
 INTEGRATOR = "rk4"            # "euler" | "heun" | "rk4"
+
+# ============================================================
+# Batch & epoch parameters
+# ============================================================
+BATCH_DURATION = 1.0            # seconds per batch
+N_PARALLEL_BATCHES = 10         # how many batches to load in RAM
+N_EPOCHS = 100                  # full passes over all batches
+
+# ============================================================
+# Vectorized population
+# ============================================================
+N_INPUTS = 21                   # 1 d_far + 1 d_near + 1 speed + 18 HD
+N_POP_UNITS = 6                 # 4 border + Basket + Axo
+POPULATION_NAME = "cells"       # name for the single vectorized population
 
 # ============================================================
 # Input generator parameters
