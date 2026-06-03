@@ -56,7 +56,7 @@ def build_network() -> NetworkRNN:
         'Delta_I':  {
             'value': pop_params['Delta_I'],
             'trainable': config.TRAIN_POP_DELTA_I,
-            'min': 0.01, 'max': 2.0,
+            'min': 0.00001, 'max': 0.5,
         },
         'I_ext':    {
             'value': pop_params['I_ext'],
@@ -74,17 +74,17 @@ def build_network() -> NetworkRNN:
             },
             'tau_f': {
                 'value': build_inp_tau_f_matrix(),
-                'trainable': config.TRAIN_SYNAPSE_TAU,
+                'trainable': config.TRAIN_SYNAPSE_TAU_f,
                 'min': 6.0, 'max': 240.0,
             },
             'tau_d': {
                 'value': build_inp_tau_d_matrix(),
-                'trainable': config.TRAIN_SYNAPSE_TAU,
+                'trainable': config.TRAIN_SYNAPSE_TAU_d,
                 'min': 2.0, 'max': 15.0,
             },
             'tau_r': {
                 'value': build_inp_tau_r_matrix(),
-                'trainable': config.TRAIN_SYNAPSE_TAU,
+                'trainable': config.TRAIN_SYNAPSE_TAU_r,
                 'min': 91.0, 'max': 1300.0,
             },
             'Uinc': {
@@ -112,17 +112,17 @@ def build_network() -> NetworkRNN:
             },
             'tau_f': {
                 'value': build_rec_tau_f_matrix(),
-                'trainable': config.TRAIN_SYNAPSE_TAU,
+                'trainable': config.TRAIN_SYNAPSE_TAU_f,
                 'min': 6.0, 'max': 240.0,
             },
             'tau_d': {
                 'value': build_rec_tau_d_matrix(),
-                'trainable': config.TRAIN_SYNAPSE_TAU,
+                'trainable': config.TRAIN_SYNAPSE_TAU_d,
                 'min': 2.0, 'max': 15.0,
             },
             'tau_r': {
                 'value': build_rec_tau_r_matrix(),
-                'trainable': config.TRAIN_SYNAPSE_TAU,
+                'trainable': config.TRAIN_SYNAPSE_TAU_r,
                 'min': 91.0, 'max': 1300.0,
             },
             'Uinc': {

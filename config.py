@@ -194,8 +194,12 @@ E_REV_INH = -75.0
 # Trainable flags
 # ============================================================
 TRAIN_SYNAPSE_GMAX = True
-TRAIN_SYNAPSE_U = True
-TRAIN_SYNAPSE_TAU = False
+TRAIN_SYNAPSE_U = False
+TRAIN_SYNAPSE_TAU_f = False
+TRAIN_SYNAPSE_TAU_r = False
+TRAIN_SYNAPSE_TAU_d = False
+
+
 TRAIN_POP_IEXT = True
 TRAIN_POP_DELTA_I = False
 

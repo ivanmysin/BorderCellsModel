@@ -60,7 +60,7 @@ def get_izhikevich_dimensionless_params(neuron_type: str) -> dict:
         "b":       b,
         "w_jump":  w_jump,
         "Delta_I": delta_I,
-        "I_ext":   0.05,
+        "I_ext":   0.001,
     }
 
 
