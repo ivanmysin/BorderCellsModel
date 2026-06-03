@@ -1,4 +1,4 @@
-"""Train border cell network on precomputed dataset.
+"""Train border cell network using neuraltide tools (adjoint state method).
 
 Usage:
     python train.py [--dataset data/dataset.h5] [--epochs 100] [--lr 1e-3]
@@ -6,15 +6,24 @@ Usage:
 
 import os
 import argparse
+
 import numpy as np
 import tensorflow as tf
+
 import config
 import neuraltide as nt
 from neuraltide.core.network import NetworkGraph, NetworkRNN
 from neuraltide.populations import IzhikevichMeanField
 from neuraltide.synapses import TsodyksMarkramSynapse
 from neuraltide.integrators import RK4Integrator
-from neuraltide.training import Trainer, CompositeLoss, MSELoss, StabilityPenalty
+from neuraltide.training import (
+    Trainer,
+    CompositeLoss,
+    MSELoss,
+    StabilityPenalty,
+    DivergenceDetector,
+)
+
 from utils.dataset import load_dataset_hdf5
 from utils.params import (
     build_pop_params,
@@ -66,22 +75,22 @@ def build_network() -> NetworkRNN:
             'tau_f': {
                 'value': build_inp_tau_f_matrix(),
                 'trainable': config.TRAIN_SYNAPSE_TAU,
-                'min': 1.0,
+                'min': 6.0, 'max': 240.0,
             },
             'tau_d': {
                 'value': build_inp_tau_d_matrix(),
                 'trainable': config.TRAIN_SYNAPSE_TAU,
-                'min': 1.0,
+                'min': 2.0, 'max': 15.0,
             },
             'tau_r': {
                 'value': build_inp_tau_r_matrix(),
                 'trainable': config.TRAIN_SYNAPSE_TAU,
-                'min': 1.0,
+                'min': 91.0, 'max': 1300.0,
             },
             'Uinc': {
                 'value': build_inp_Uinc_matrix(),
                 'trainable': config.TRAIN_SYNAPSE_U,
-                'min': 0.0, 'max': 1.0,
+                'min': 0.1, 'max': 0.7,
             },
             'pconn': {
                 'value': build_inp_pconn_matrix(),
@@ -104,22 +113,22 @@ def build_network() -> NetworkRNN:
             'tau_f': {
                 'value': build_rec_tau_f_matrix(),
                 'trainable': config.TRAIN_SYNAPSE_TAU,
-                'min': 1.0,
+                'min': 6.0, 'max': 240.0,
             },
             'tau_d': {
                 'value': build_rec_tau_d_matrix(),
                 'trainable': config.TRAIN_SYNAPSE_TAU,
-                'min': 1.0,
+                'min': 2.0, 'max': 15.0,
             },
             'tau_r': {
                 'value': build_rec_tau_r_matrix(),
                 'trainable': config.TRAIN_SYNAPSE_TAU,
-                'min': 1.0,
+                'min': 91.0, 'max': 1300.0,
             },
             'Uinc': {
                 'value': build_rec_Uinc_matrix(),
                 'trainable': config.TRAIN_SYNAPSE_U,
-                'min': 0.0, 'max': 1.0,
+                'min': 0.1, 'max': 0.7,
             },
             'pconn': {
                 'value': build_rec_pconn_matrix(),
@@ -134,12 +143,31 @@ def build_network() -> NetworkRNN:
                       src=config.POPULATION_NAME, tgt=config.POPULATION_NAME)
 
     graph.validate()
-    return NetworkRNN(graph, integrator=RK4Integrator())
+    return NetworkRNN(
+        graph,
+        integrator=RK4Integrator(),
+        stability_penalty_weight=1e-3,
+    )
+
+
+def _batch_target_dict(targets_4d: np.ndarray) -> dict:
+    """Pad target rates [B,T,4] → [B,T,6] (Basket / Axo targeted to 0 Hz)."""
+    targets_4 = tf.constant(targets_4d, dtype=tf.float32)
+    targets_6 = tf.pad(targets_4, [[0, 0], [0, 0], [0, 2]])
+    return {config.POPULATION_NAME: targets_6}
+
+
+def _batch_loss(target_dict: dict) -> CompositeLoss:
+    """Build CompositeLoss for the current batch's targets."""
+    return CompositeLoss([
+        (1.0, MSELoss(target_dict)),
+        (1e-3, StabilityPenalty()),
+    ])
 
 
 def train(dataset_path: str = None, n_epochs: int = None,
           learning_rate: float = None):
-    """Run training loop over dataset batches."""
+    """Run training loop over dataset batches using adjoint state method."""
 
     ds_path = dataset_path or os.path.join(
         os.path.dirname(config.TRAJECTORY_HDF5), 'dataset.h5')
@@ -159,39 +187,39 @@ def train(dataset_path: str = None, n_epochs: int = None,
     n_vars = sum(np.prod(v.shape) for v in network.trainable_variables)
     print(f"  Trainable parameters: {int(n_vars)}")
 
-    optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
+    placeholder_target = {
+        config.POPULATION_NAME: tf.zeros([1, 1, config.N_POP_UNITS], dtype=tf.float32)
+    }
+    trainer = Trainer(
+        network=network,
+        loss_fn=_batch_loss(placeholder_target),
+        optimizer=tf.keras.optimizers.Adam(learning_rate=lr),
+        grad_method='adjoint',
+        grad_clip_norm=1.0,
+    )
+
+    divergence_detector = DivergenceDetector()
 
     loss_history = []
     best_loss = float('inf')
 
-    print(f"Training: {n_epochs} epochs x {n_batches} batches...")
+    print(f"Training (adjoint state method): "
+          f"{n_epochs} epochs x {n_batches} batches...")
     for epoch in range(n_epochs):
         epoch_loss = 0.0
 
         for batch_idx in range(n_batches):
             batch = ds['get_batch'](batch_idx)
             t_seq = tf.constant(batch['t_seq'])
-            inputs = graph_pack_inputs(network, batch['inputs'])
+            inputs = network._graph.pack_inputs({
+                'inputs': tf.constant(batch['inputs'], dtype=tf.float32)
+            })
 
-            targets_4 = tf.constant(batch['targets'])
-            targets_6 = tf.pad(targets_4, [[0, 0], [0, 0], [0, 2]])
-            target = {config.POPULATION_NAME: targets_6}
+            target_dict = _batch_target_dict(batch['targets'])
+            trainer.loss_fn = _batch_loss(target_dict)
 
-            loss_fn = CompositeLoss([
-                (1.0, MSELoss(target)),
-                (1e-3, StabilityPenalty()),
-            ])
-
-            with tf.GradientTape() as tape:
-                output = network(t_seq, inputs=inputs, training=True)
-                loss = loss_fn(output, network)
-
-            grads = tape.gradient(loss, network.trainable_variables)
-            grads = [g if g is not None else tf.zeros_like(v)
-                     for g, v in zip(grads, network.trainable_variables)]
-            optimizer.apply_gradients(zip(grads, network.trainable_variables))
-
-            epoch_loss += loss.numpy()
+            step = trainer.train_step(t_seq, inputs)
+            epoch_loss += float(step['loss'])
 
         avg_loss = epoch_loss / n_batches
         loss_history.append(float(avg_loss))
@@ -199,31 +227,36 @@ def train(dataset_path: str = None, n_epochs: int = None,
         if avg_loss < best_loss:
             best_loss = avg_loss
 
+        if hasattr(divergence_detector, 'on_epoch_end'):
+            divergence_detector.on_epoch_end(epoch, {'loss': avg_loss})
+
         if (epoch + 1) % max(1, n_epochs // 20) == 0 or epoch == 0:
             print(f"  Epoch {epoch+1:4d}/{n_epochs} | loss={avg_loss:.6f}"
                   f" | best={best_loss:.6f}")
 
+    trainer._last_history = type(
+        'H', (), {'loss_history': loss_history, 'epochs': n_epochs}
+    )()
+
     ds['file'].close()
 
     print("Saving results...")
-    save_training_results(loss_history, network)
+    save_training_results(loss_history, network, trainer)
 
     return loss_history
 
 
-def graph_pack_inputs(network, inputs_np):
-    """Pack numpy inputs into the graph's packed format."""
-    return network._graph.pack_inputs({
-        'inputs': tf.constant(inputs_np, dtype=tf.float32)
-    })
-
-
-def save_training_results(loss_history, network):
-    """Save training results to HDF5."""
+def save_training_results(loss_history, network, trainer):
+    """Save training results to HDF5 and JSON."""
     os.makedirs(config.RESULTS_DIR, exist_ok=True)
-    path = os.path.join(config.RESULTS_DIR, 'training.h5')
+
+    json_path = os.path.join(config.RESULTS_DIR, 'training.json')
+    trainer.export_results(json_path, format='json')
+    print(f"  Trainer results saved to {json_path}")
+
+    h5_path = os.path.join(config.RESULTS_DIR, 'training.h5')
     import h5py
-    with h5py.File(path, 'w') as f:
+    with h5py.File(h5_path, 'w') as f:
         f.create_dataset('loss_history', data=np.array(loss_history))
 
         grp = f.create_group('parameters')
@@ -238,7 +271,7 @@ def save_training_results(loss_history, network):
                 if isinstance(val, (int, float, str, bool)):
                     cfg.attrs[attr] = val
 
-    print(f"  Results saved to {path}")
+    print(f"  HDF5 results saved to {h5_path}")
 
 
 def main():
