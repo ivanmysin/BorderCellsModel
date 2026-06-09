@@ -116,7 +116,7 @@ def main():
     parser = argparse.ArgumentParser(description="Generate agent trajectory")
     parser.add_argument("--duration", type=float, default=600.0,
                         help="Trajectory duration in seconds (default: 600 = 10 min)")
-    parser.add_argument("--plot", action="store_true", default=True,
+    parser.add_argument("--plot", action="store_true", default=False,
                         help="Plot trajectory overview")
     args = parser.parse_args()
 
