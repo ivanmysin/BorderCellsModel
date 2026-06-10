@@ -66,10 +66,36 @@ gpus = tf.config.list_physical_devices('GPU')
 print(f"  tf.config.list_physical_devices('GPU') : {gpus}")
 if not gpus:
     print("  >>> NO GPU VISIBLE TO TENSORFLOW <<<")
+    print()
+    print("  Likely fix: install the [and-cuda] extra for TF 2.16+:")
+    print("    pip install --upgrade \"tensorflow[and-cuda]==2.21.*\"")
+    print("  This bundles nvidia-cuda-runtime-cu12 / nvidia-cudnn-cu12 / etc.")
+    print("  into the venv (~600 MB). System CUDA is not required.")
+    print("  If GPUs are still empty after that, re-run with TF_CPP_MIN_LOG_LEVEL=0")
+    print("  to see which .so failed to dlopen.")
 
 print()
 print("=" * 60)
-print(" 6. Try a small matmul on each device")
+print(" 6. Configure GPU (memory growth BEFORE any GPU op)")
+print("=" * 60)
+if gpus:
+    for g in gpus:
+        try:
+            tf.config.experimental.set_memory_growth(g, True)
+            print(f"  set_memory_growth OK for {g.name}")
+        except RuntimeError as e:
+            print(f"  could not set memory growth for {g.name}: {e}")
+    try:
+        tf.config.set_soft_device_placement(True)
+        print("  set_soft_device_placement OK")
+    except Exception as e:
+        print(f"  could not set soft placement: {e}")
+else:
+    print("  no GPUs, skipping")
+
+print()
+print("=" * 60)
+print(" 7. Try a small matmul on each device")
 print("=" * 60)
 import numpy as np
 a = tf.constant(np.random.randn(1000, 1000).astype(np.float32))
@@ -90,17 +116,3 @@ if gpus:
         print(f"  GPU matmul 1000x1000 : {dt_gpu*1000:.1f} ms, speedup {dt_cpu/dt_gpu:.1f}x")
     except Exception as e:
         print(f"  GPU matmul FAILED: {e}")
-
-print()
-print("=" * 60)
-print(" 7. Try forcing GPU growth (memory)")
-print("=" * 60)
-if gpus:
-    try:
-        for g in gpus:
-            tf.config.experimental.set_memory_growth(g, True)
-        print("  set_memory_growth OK")
-    except Exception as e:
-        print(f"  ERROR: {e}")
-else:
-    print("  no GPUs, skipping")
