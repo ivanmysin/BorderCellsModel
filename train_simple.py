@@ -78,7 +78,7 @@ class BorderMeanFieldNetwork(Layer):
             shape=(self.units,),
             initializer=tf.constant_initializer(params['Delta_I']),
             trainable=config.TRAIN_POP_DELTA_I,
-            constraint=MinMax(0.0001, 0.5),
+            constraint=MinMax(0.0001, 0.1),
             name='Delta_I',
         )
         self.I_ext = self.add_weight(
@@ -119,7 +119,7 @@ class BorderMeanFieldNetwork(Layer):
             shape=(self.pre, self.post),
             initializer=tf.constant_initializer(params['Uinc']),
             trainable=config.TRAIN_SYNAPSE_U,
-            constraint=MinMax(0.04, 0.4),
+            constraint=MinMax(0.04, 0.7),
             name='Uinc',
         )
 
@@ -283,6 +283,33 @@ def load_pretrained(model, path):
     return loaded
 
 
+def setup_gpu():
+    """Configure GPU: log devices, enable memory growth, soft placement."""
+    gpus = tf.config.list_physical_devices('GPU')
+    cpus = tf.config.list_physical_devices('CPU')
+    print(f"  Devices: {len(gpus)} GPU(s), {len(cpus)} CPU(s)")
+    for i, gpu in enumerate(gpus):
+        try:
+            tf.config.experimental.set_memory_growth(gpu, True)
+            print(f"  GPU:{i} {gpu.name} — memory growth enabled")
+        except RuntimeError as e:
+            print(f"  GPU:{i} {gpu.name} — memory growth not set: {e}")
+    if gpus:
+        try:
+            tf.config.set_soft_device_placement(True)
+        except Exception:
+            pass
+        try:
+            with tf.device('/GPU:0'):
+                test = tf.constant([1.0, 2.0, 3.0]) + tf.constant([4.0, 5.0, 6.0])
+                _ = test.numpy()
+            print(f"  GPU reachable: {test.device}")
+        except Exception as e:
+            print(f"  WARNING: GPU op failed, falling back to CPU: {e}")
+    else:
+        print("  WARNING: no GPU visible. Training on CPU.")
+
+
 def load_all_batches(dataset_path):
     ds = load_dataset_hdf5(dataset_path)
     n_batches = ds['n_batches']
@@ -351,6 +378,9 @@ def train(dataset_path=None, n_epochs=None, learning_rate=None,
         config.RANDOM_SEED = seed
     tf.random.set_seed(config.RANDOM_SEED)
     np.random.seed(config.RANDOM_SEED)
+
+    print("Configuring devices...")
+    setup_gpu()
 
     print(f"Loading dataset from {ds_path}...")
     X, Y = load_all_batches(ds_path)
