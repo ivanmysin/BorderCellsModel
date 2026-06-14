@@ -173,8 +173,8 @@ class BorderMeanFieldNetwork(Layer):
         v_new = v + (h / 6) * (k1v + 2 * k2v + 2 * k3v + k4v)
         w_new = w + (h / 6) * (k1w + 2 * k2w + 2 * k3w + k4w)
 
-        #dt_per_tau = self.dt_dim / self.tau_pop
-        FRpre_unit = r   #* dt_per_tau
+        dt_per_tau = self.dt_dim / self.tau_pop
+        FRpre_unit = r * dt_per_tau
         FRpre_ext = ext * 0.001 * self.dt_dim
         FRpre = tf.concat([FRpre_unit, FRpre_ext], axis=1)
         FRpre_full = self.pconn[tf.newaxis, :, :] * FRpre[:, :, tf.newaxis]
@@ -198,6 +198,13 @@ class BorderMeanFieldNetwork(Layer):
         U_new = u_ + Uinc_b * (1.0 - u_) * FRpre_full
         A_new = a_ + released
         R_new = r_ - released
+
+        r_new = tf.where(tf.math.is_finite(r_new), r_new, tf.zeros_like(r_new))
+        v_new = tf.where(tf.math.is_finite(v_new), v_new, tf.zeros_like(v_new))
+        w_new = tf.where(tf.math.is_finite(w_new), w_new, tf.zeros_like(w_new))
+        R_new = tf.where(tf.math.is_finite(R_new), R_new, tf.ones_like(R_new))
+        U_new = tf.where(tf.math.is_finite(U_new), U_new, tf.zeros_like(U_new))
+        A_new = tf.where(tf.math.is_finite(A_new), A_new, tf.zeros_like(A_new))
 
         output = r_new / (self.tau_pop * 1e-3)
         return output, [r_new, v_new, w_new, R_new, U_new, A_new]
@@ -368,7 +375,7 @@ def save_training_results(loss_history, model):
 
 
 def train(dataset_path=None, n_epochs=None, learning_rate=None,
-          batches_per_epoch=None, seed=None, resume=None):
+          batches_per_epoch=None, seed=None, resume=None, save_every=50):
     ds_path = dataset_path or os.path.join(
         os.path.dirname(config.TRAJECTORY_HDF5), 'dataset.h5')
     n_epochs = n_epochs or config.N_EPOCHS
@@ -402,7 +409,7 @@ def train(dataset_path=None, n_epochs=None, learning_rate=None,
     loss_history = []
     best_loss = float('inf')
     print(f"Training: {n_epochs} epochs x {batches_per_epoch} batches/epoch "
-          f"(out of {n_batches})...")
+          f"(out of {n_batches}); checkpoint every {save_every} epochs...")
     t_start = time.time()
     for epoch in range(n_epochs):
         epoch_t0 = time.time()
@@ -423,6 +430,9 @@ def train(dataset_path=None, n_epochs=None, learning_rate=None,
             print(f"  Epoch {epoch+1:4d}/{n_epochs} | loss={avg_loss:.6f} | "
                   f"best={best_loss:.6f} | finite={n_finite}/{batches_per_epoch} "
                   f"| dt={epoch_dt:.1f}s")
+        if (epoch + 1) % save_every == 0 or (epoch + 1) == n_epochs:
+            print(f"  [checkpoint] saving at epoch {epoch+1}...")
+            save_training_results(loss_history, model)
     total_dt = time.time() - t_start
     print(f"Training done in {total_dt/60:.1f} min.")
     save_training_results(loss_history, model)
@@ -439,9 +449,11 @@ def main():
     parser.add_argument('--resume', type=str, default=None,
                         help='Path to a previous results/training.h5 to load '
                              'trained weights from before training continues.')
+    parser.add_argument('--save-every', type=int, default=50,
+                        help='Save checkpoint every N epochs (default 50).')
     args = parser.parse_args()
     train(args.dataset, args.epochs, args.lr, args.batches_per_epoch,
-          args.seed, args.resume)
+          args.seed, args.resume, args.save_every)
 
 
 if __name__ == '__main__':
