@@ -1,5 +1,6 @@
 """Configuration for border cell simulation."""
 
+import math
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -124,6 +125,17 @@ HD_POPVEC = {
 # Derived
 THETA_PREF = [i * HD_POPVEC["theta_step"] for i in range(HD_POPVEC["n_hd"])]
 
+# Wall direction angles (radians), used as the prior mean for HD→border gsyn_max.
+# Convention: theta = atan2(vy, vx), so NORTH (vy>0) = pi/2, EAST (vx>0) = 0,
+# SOUTH (vy<0) = -pi/2, WEST (vx<0) = pi.
+WALL_ANGLES = {
+    0:  math.pi / 2,   # Border_N
+    1: -math.pi / 2,   # Border_S
+    2:  0.0,           # Border_E
+    3:  math.pi,       # Border_W
+}
+HD_SIGMA_RAD = math.radians(60.0)   # bandwidth of HD→border direction preference
+
 # Backward-compatible aliases
 ALPHA_FAR = DISTANCE_FAR["alpha_far"]
 ALPHA_NEAR = DISTANCE_NEAR["alpha_near"]
@@ -146,6 +158,7 @@ F_MAX_BORDER = 15.0            # Hz, peak border cell firing
 LOSS_WEIGHT_MSE = 1.0
 LOSS_WEIGHT_FR = 0.1
 LOSS_WEIGHT_SPARSITY = 0.05
+WTA_WEIGHT = 1e-3                    # decorrelation penalty weight
 
 # ============================================================
 # Population parameters (dimensional mode — loaded from CSV)

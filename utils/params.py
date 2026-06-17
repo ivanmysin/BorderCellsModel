@@ -138,15 +138,33 @@ def _input_targets(inp_name: str) -> list:
 
 
 def build_inp_gsyn_matrix() -> np.ndarray:
-    """Build [21,6] gsyn_max matrix for input→population connections."""
+    """Build [21,6] gsyn_max matrix for input→population connections.
+
+    For HD channels (indices 3..20), gsyn_max is direction-similarity weighted:
+    Border_j gets a strong connection from HD cells whose preferred direction
+    is close to WALL_ANGLES[j]. This gives the model the right inductive bias
+    to differentiate border cells via the history of HD activity.
+    """
     m = np.zeros((config.N_INPUTS, config.N_POP_UNITS), dtype=np.float64)
     for i, inp_name in enumerate(_INPUT_NAMES):
         conn_key = 'Input→Pyramidal'
         p = _get_syn_params(conn_key)
-        g = p['gsyn_max'] * config.GSYN_SCALE_DIMENSIONAL
-        g *= (1.0 + np.random.uniform(-0.3, 0.3))
-        for j in _input_targets(inp_name):
-            m[i, j] = max(0.001, g)
+        g_base = p['gsyn_max'] * config.GSYN_SCALE_DIMENSIONAL
+
+        if inp_name.startswith('HD_'):
+            hd_idx = int(inp_name.split('_')[1])
+            hd_angle = np.deg2rad(config.THETA_PREF[hd_idx])
+            for j, unit_name in enumerate(config.UNIT_NAMES[:4]):
+                wall_angle = config.WALL_ANGLES[j]
+                diff = (hd_angle - wall_angle + np.pi) % (2 * np.pi) - np.pi
+                g_dir = np.exp(-diff ** 2
+                               / (2 * config.HD_SIGMA_RAD ** 2))
+                g = g_base * g_dir * (1.0 + np.random.uniform(-0.3, 0.3))
+                m[i, j] = max(0.001, g)
+        else:
+            g = g_base * (1.0 + np.random.uniform(-0.3, 0.3))
+            for j in _input_targets(inp_name):
+                m[i, j] = max(0.001, g)
     return m
 
 

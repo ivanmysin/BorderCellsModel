@@ -135,8 +135,10 @@ class BorderMeanFieldNetwork(Layer):
 
     def get_initial_state(self, batch_size=1):
         return [
-            tf.zeros([batch_size, self.units], dtype=tf.float32),
-            tf.zeros([batch_size, self.units], dtype=tf.float32),
+            tf.random.normal([batch_size, self.units], mean=0.0,
+                             stddev=0.01, dtype=tf.float32),
+            tf.random.normal([batch_size, self.units], mean=0.0,
+                             stddev=0.01, dtype=tf.float32),
             tf.zeros([batch_size, self.units], dtype=tf.float32),
             tf.ones([batch_size, self.pre, self.post], dtype=tf.float32),
             tf.zeros([batch_size, self.pre, self.post], dtype=tf.float32),
@@ -219,13 +221,15 @@ def gather_params():
     Uinc = np.vstack([build_rec_Uinc_matrix(), build_inp_Uinc_matrix()])
     pconn = np.vstack([build_rec_pconn_matrix(), build_inp_pconn_matrix()])
     e_r = np.vstack([build_rec_e_r_matrix(), build_inp_e_r_matrix()])
+    i_ext = np.asarray(pop['I_ext'], dtype=np.float32).copy()
+    i_ext[:4] += np.random.uniform(-0.1, 0.1, size=4).astype(np.float32)
     return {
         'alpha': np.asarray(pop['alpha'], dtype=np.float32),
         'a': np.asarray(pop['a'], dtype=np.float32),
         'b': np.asarray(pop['b'], dtype=np.float32),
         'w_jump': np.asarray(pop['w_jump'], dtype=np.float32),
         'tau_pop': np.asarray(pop['tau_pop'], dtype=np.float32),
-        'I_ext': np.asarray(pop['I_ext'], dtype=np.float32),
+        'I_ext': i_ext,
         'Delta_I': np.asarray(pop['Delta_I'], dtype=np.float32),
         'gsyn_max': gsyn.astype(np.float32),
         'tau_d': tau_d.astype(np.float32),
@@ -237,6 +241,25 @@ def gather_params():
     }
 
 
+def decorrelation_penalty(y_pred):
+    """Penalize simultaneous activity of all 4 border cells.
+
+    Computes the ratio (off-diagonal sum) / (mean of diagonal) of the
+    uncentered 4-cell covariance over time. Scale-invariant in the
+    prediction magnitude:
+        - one cell active        : 0
+        - two cells (corner)     : 4
+        - all four active        : 12
+    """
+    border = y_pred[..., :4]
+    T = tf.cast(tf.shape(border)[-2], tf.float32)
+    cov = tf.einsum('bti,btj->bij', border, border) / T
+    diag = tf.linalg.diag_part(cov)
+    off_sum = tf.reduce_sum(cov, axis=[-1, -2]) - tf.reduce_sum(diag, axis=-1)
+    denom = tf.reduce_mean(diag, axis=-1) + 1e-6
+    return tf.reduce_mean(off_sum / denom)
+
+
 def build_model():
     params = gather_params()
     inputs = Input(shape=(None, config.N_INPUTS), batch_size=1)
@@ -245,13 +268,14 @@ def build_model():
     out = rnn(inputs)
     model = Model(inputs, out)
 
-    def msle_first4(y_true, y_pred):
-        return tf.keras.losses.MeanSquaredLogarithmicError()(
-            y_true, y_pred[..., :4])
+    def loss_with_reg(y_true, y_pred):
+        return (tf.keras.losses.MeanSquaredLogarithmicError()(
+                    y_true, y_pred[..., :4])
+                + config.WTA_WEIGHT * decorrelation_penalty(y_pred))
 
     model.compile(
         optimizer=Adam(learning_rate=config.LEARNING_RATE, clipvalue=10.0),
-        loss=msle_first4,
+        loss=loss_with_reg,
     )
     return model
 
