@@ -166,7 +166,6 @@ class BorderMeanFieldNetwork(Layer):
         dwdt = (self.a * (self.b * v - w) + self.w_jump * r) / self.tau_pop
         return drdt, dvdt, dwdt
 
-    @tf.function
     def call(self, inputs, states):
         r, v, w, R, U, A = states
         ext = inputs
