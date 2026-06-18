@@ -134,7 +134,7 @@ WALL_ANGLES = {
     2:  0.0,           # Border_E
     3:  math.pi,       # Border_W
 }
-HD_SIGMA_RAD = math.radians(60.0)   # bandwidth of HD→border direction preference
+HD_SIGMA_RAD = math.radians(20.0)   # bandwidth of HD→border direction preference
 
 # Backward-compatible aliases
 ALPHA_FAR = DISTANCE_FAR["alpha_far"]

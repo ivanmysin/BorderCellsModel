@@ -38,6 +38,70 @@ from utils.params import (
 from utils.dataset import load_dataset_hdf5
 
 
+class NaNStoppingCallback(tf.keras.callbacks.Callback):
+    """Stop training if loss becomes NaN/Inf."""
+
+    def on_batch_end(self, batch, logs=None):
+        loss = logs.get('loss')
+        if loss is None or not np.isfinite(loss):
+            print(f"\n  NaN/Inf detected at batch {batch} (loss={loss}), stopping.")
+            self.model.stop_training = True
+
+    def on_epoch_end(self, epoch, logs=None):
+        loss = logs.get('loss')
+        if loss is None or not np.isfinite(loss):
+            print(f"\n  NaN/Inf detected at epoch {epoch} (loss={loss}), stopping.")
+            self.model.stop_training = True
+
+
+class CheckpointCallback(tf.keras.callbacks.Callback):
+    """Save weights + loss history at each epoch with unique filenames.
+
+    Files saved per epoch:
+        results/checkpoints/epoch_{N:04d}_loss_{L:.6f}.weights.h5
+        results/checkpoints/epoch_{N:04d}_loss_{L:.6f}_meta.json
+    """
+
+    def __init__(self, checkpoint_dir=None):
+        super().__init__()
+        self.checkpoint_dir = checkpoint_dir or os.path.join(
+            config.RESULTS_DIR, 'checkpoints')
+        self.loss_history = []
+
+    def on_epoch_end(self, epoch, logs=None):
+        logs = logs or {}
+        loss = float(logs.get('loss', float('nan')))
+        self.loss_history.append(loss)
+
+        os.makedirs(self.checkpoint_dir, exist_ok=True)
+
+        tag = f"epoch_{epoch + 1:04d}_loss_{loss:.6f}"
+
+        weights_path = os.path.join(self.checkpoint_dir, f"{tag}.weights.h5")
+        self.model.save_weights(weights_path)
+
+        meta = {
+            'epoch': epoch + 1,
+            'loss': loss,
+            'val_loss': logs.get('val_loss'),
+            'learning_rate': float(self.model.optimizer.learning_rate.numpy()),
+        }
+        meta_path = os.path.join(self.checkpoint_dir, f"{tag}_meta.json")
+        with open(meta_path, 'w') as f:
+            json.dump(meta, f, indent=2)
+
+        if (epoch + 1) % max(1, self.params.get('epochs', 100) // 20) == 0 or epoch == 0:
+            print(f"  [checkpoint] epoch {epoch + 1}: loss={loss:.6f} → {weights_path}")
+
+    def on_train_end(self, logs=None):
+        latest_path = os.path.join(self.checkpoint_dir, 'latest.weights.h5')
+        self.model.save_weights(latest_path)
+        history_path = os.path.join(self.checkpoint_dir, 'loss_history.json')
+        with open(history_path, 'w') as f:
+            json.dump(self.loss_history, f, indent=2)
+        print(f"  [checkpoint] saved latest weights + loss_history.json")
+
+
 class MinMax(Constraint):
     def __init__(self, min_val=0.0, max_val=float('inf')):
         self.min_val = float(min_val)
@@ -273,7 +337,7 @@ def build_model():
     model = Model(inputs, out)
 
     def loss_with_reg(y_true, y_pred):
-        return (tf.keras.losses.MeanSquaredLogarithmicError()(
+        return (tf.keras.losses.MeanSquaredError()(    # tf.keras.losses.MeanSquaredLogarithmicError()
                     y_true, y_pred[..., :4])
                 + config.WTA_WEIGHT * decorrelation_penalty(y_pred))
 
@@ -403,7 +467,7 @@ def save_training_results(loss_history, model):
 
 
 def train(dataset_path=None, n_epochs=None, learning_rate=None,
-          batches_per_epoch=None, seed=None, resume=None, save_every=50):
+          batches_per_epoch=None, seed=None, resume=None):
     ds_path = dataset_path or os.path.join(
         os.path.dirname(config.TRAJECTORY_HDF5), 'dataset.h5')
     n_epochs = n_epochs or config.N_EPOCHS
@@ -440,39 +504,23 @@ def train(dataset_path=None, n_epochs=None, learning_rate=None,
         print(f"Resuming from {resume}...")
         load_pretrained(model, resume)
 
-    loss_history = []
-    best_loss = float('inf')
-    print(f"Training: {n_epochs} epochs x {batches_per_epoch} batches/epoch "
-          f"(out of {n_batches}); checkpoint every {save_every} epochs...")
+
+    nan_cb = NaNStoppingCallback()
+    ckpt_cb = CheckpointCallback()
+    callbacks = [nan_cb, ckpt_cb]
+
     t_start = time.time()
-    for epoch in range(n_epochs):
-        epoch_t0 = time.time()
-        idx = np.random.choice(n_batches, size=batches_per_epoch, replace=False)
-        epoch_loss = 0.0
-        n_finite = 0
-        for i in idx:
-            x_batch = X[i:i+1]   # shape (1, T, 21)
-            y_batch = Y[i:i+1]   # shape (1, T, 4)
-            loss = model.train_on_batch(x_batch, y_batch)
-            if np.isfinite(loss):
-                epoch_loss += float(loss)
-                n_finite += 1
-        avg_loss = epoch_loss / max(n_finite, 1)
-        loss_history.append(float(avg_loss))
-        if avg_loss < best_loss:
-            best_loss = avg_loss
-        epoch_dt = time.time() - epoch_t0
-        if (epoch + 1) % max(1, n_epochs // 20) == 0 or epoch == 0:
-            print(f"  Epoch {epoch+1:4d}/{n_epochs} | loss={avg_loss:.6f} | "
-                  f"best={best_loss:.6f} | finite={n_finite}/{batches_per_epoch} "
-                  f"| dt={epoch_dt:.1f}s")
-        if (epoch + 1) % save_every == 0 or (epoch + 1) == n_epochs:
-            print(f"  [checkpoint] saving at epoch {epoch+1}...")
-            save_training_results(loss_history, model)
+    history = model.fit(
+        X, Y,
+        epochs=n_epochs,
+        batch_size=1,
+        verbose=2,
+        callbacks=callbacks,
+    )
     total_dt = time.time() - t_start
     print(f"Training done in {total_dt/60:.1f} min.")
-    save_training_results(loss_history, model)
-    return loss_history
+
+    return history.history['loss']
 
 
 def main():
@@ -483,13 +531,11 @@ def main():
     parser.add_argument('--seed', type=int, default=None)
     parser.add_argument('--batches-per-epoch', type=int, default=None)
     parser.add_argument('--resume', type=str, default=None,
-                        help='Path to a previous results/training.h5 to load '
-                             'trained weights from before training continues.')
-    parser.add_argument('--save-every', type=int, default=50,
-                        help='Save checkpoint every N epochs (default 50).')
+                        help='Path to a previous results/checkpoints/latest.weights.h5 to '
+                             'load trained weights from before training continues.')
     args = parser.parse_args()
     train(args.dataset, args.epochs, args.lr, args.batches_per_epoch,
-          args.seed, args.resume, args.save_every)
+          args.seed, args.resume)
 
 
 if __name__ == '__main__':
