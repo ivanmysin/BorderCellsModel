@@ -44,6 +44,8 @@ def generate_dataset(trajectory_path: str = None, output_path: str = None):
     batches = prepare_batches(inputs, targets)
     print(f"  {len(batches)} batches, {batches[0]['t_seq'].shape[1]} steps each")
 
+    print(f"  batch 0: input shape: {batches[0]['inputs'].shape}, target shape: {batches[0]['targets'].shape}")
+
     metadata = {
         'trajectory_path': traj_path,
         'n_steps_total': n_steps,

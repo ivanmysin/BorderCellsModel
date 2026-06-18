@@ -74,6 +74,10 @@ class BorderMeanFieldNetwork(Layer):
         self.pconn = tf.constant(params['pconn'], dtype=tf.float32)
         self.e_r = tf.constant(params['e_r'], dtype=tf.float32)
 
+        # print("=== DEBUG ===")
+        # print(type(self.alpha))
+        # print(type(self.e_r))
+
         self.Delta_I = self.add_weight(
             shape=(self.units,),
             initializer=tf.constant_initializer(params['Delta_I']),
@@ -135,8 +139,8 @@ class BorderMeanFieldNetwork(Layer):
 
     def get_initial_state(self, batch_size=1):
         return [
-            tf.random.normal([batch_size, self.units], mean=0.0,
-                             stddev=0.01, dtype=tf.float32),
+            tf.random.uniform([batch_size, self.units], minval=0.0,
+                              maxval=0.1, dtype=tf.float32),
             tf.random.normal([batch_size, self.units], mean=0.0,
                              stddev=0.01, dtype=tf.float32),
             tf.zeros([batch_size, self.units], dtype=tf.float32),
@@ -162,6 +166,7 @@ class BorderMeanFieldNetwork(Layer):
         dwdt = (self.a * (self.b * v - w) + self.w_jump * r) / self.tau_pop
         return drdt, dvdt, dwdt
 
+    @tf.function
     def call(self, inputs, states):
         r, v, w, R, U, A = states
         ext = inputs
@@ -187,11 +192,11 @@ class BorderMeanFieldNetwork(Layer):
         tau1r = tf.where(self.tau_d != self.tau_r,
                          self.tau_d / (self.tau_d - self.tau_r),
                          1e-13)
-        exp_d_b = exp_d[tf.newaxis, :, :]
-        exp_r_b = exp_r[tf.newaxis, :, :]
-        exp_f_b = exp_f[tf.newaxis, :, :]
-        tau1r_b = tau1r[tf.newaxis, :, :]
-        Uinc_b = self.Uinc[tf.newaxis, :, :]
+        exp_d_b = exp_d
+        exp_r_b = exp_r
+        exp_f_b = exp_f
+        tau1r_b = tau1r
+        Uinc_b = self.Uinc
 
         a_ = A * exp_d_b
         r_ = 1.0 + (R - 1.0 + tau1r_b * A) * exp_r_b - tau1r_b * A
@@ -201,12 +206,12 @@ class BorderMeanFieldNetwork(Layer):
         A_new = a_ + released
         R_new = r_ - released
 
-        r_new = tf.where(tf.math.is_finite(r_new), r_new, tf.zeros_like(r_new))
-        v_new = tf.where(tf.math.is_finite(v_new), v_new, tf.zeros_like(v_new))
-        w_new = tf.where(tf.math.is_finite(w_new), w_new, tf.zeros_like(w_new))
-        R_new = tf.where(tf.math.is_finite(R_new), R_new, tf.ones_like(R_new))
-        U_new = tf.where(tf.math.is_finite(U_new), U_new, tf.zeros_like(U_new))
-        A_new = tf.where(tf.math.is_finite(A_new), A_new, tf.zeros_like(A_new))
+        # r_new = tf.where(tf.math.is_finite(r_new), r_new, tf.zeros_like(r_new))
+        # v_new = tf.where(tf.math.is_finite(v_new), v_new, tf.zeros_like(v_new))
+        # w_new = tf.where(tf.math.is_finite(w_new), w_new, tf.zeros_like(w_new))
+        # R_new = tf.where(tf.math.is_finite(R_new), R_new, tf.ones_like(R_new))
+        # U_new = tf.where(tf.math.is_finite(U_new), U_new, tf.zeros_like(U_new))
+        # A_new = tf.where(tf.math.is_finite(A_new), A_new, tf.zeros_like(A_new))
 
         output = r_new / (self.tau_pop * 1e-3)
         return output, [r_new, v_new, w_new, R_new, U_new, A_new]
@@ -352,8 +357,8 @@ def load_all_batches(dataset_path):
         X_list.append(batch['inputs'])
         Y_list.append(batch['targets'])
     ds['file'].close()
-    X = np.stack(X_list, axis=0).astype(np.float32)
-    Y = np.stack(Y_list, axis=0).astype(np.float32)
+    X = np.concat(X_list).astype(np.float32)
+    Y = np.concat(Y_list).astype(np.float32)
     print(f"  X shape: {X.shape}, Y shape: {Y.shape}, "
           f"X memory: {X.nbytes / 1e6:.1f} MB")
     return X, Y
@@ -415,10 +420,16 @@ def train(dataset_path=None, n_epochs=None, learning_rate=None,
 
     print(f"Loading dataset from {ds_path}...")
     X, Y = load_all_batches(ds_path)
+
+    print("X shape:", X.shape)
+    print("Y shape:", Y.shape)
+
     n_batches = X.shape[0]
     if batches_per_epoch > n_batches:
         raise ValueError(
             f"batches_per_epoch ({batches_per_epoch}) > n_batches ({n_batches})")
+
+
 
     print("Building model...")
     model = build_model()
@@ -441,7 +452,9 @@ def train(dataset_path=None, n_epochs=None, learning_rate=None,
         epoch_loss = 0.0
         n_finite = 0
         for i in idx:
-            loss = model.train_on_batch(X[i], Y[i])
+            x_batch = X[i:i+1]   # shape (1, T, 21)
+            y_batch = Y[i:i+1]   # shape (1, T, 4)
+            loss = model.train_on_batch(x_batch, y_batch)
             if np.isfinite(loss):
                 epoch_loss += float(loss)
                 n_finite += 1
