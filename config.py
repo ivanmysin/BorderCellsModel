@@ -72,7 +72,7 @@ SIM_DT = DT                     # neural timestep
 UP_SAMPLE_FACTOR = 1            # no upsampling — trajectory already at SIM_DT
 TRIAL_DURATION = 10.0           # 10 s per trial
 N_TRIALS = 180                  # ~30 min total = 180 trials × 10 s
-BATCH_SIZE = 100
+BATCH_SIZE = 4 # 100
 N_BATCHES = 100
 LEARNING_RATE = 5e-3
 N_BATCHES_PER_EPOCH = 200      # random batches sampled per epoch (dataset has ~600)
@@ -158,7 +158,8 @@ F_MAX_BORDER = 15.0            # Hz, peak border cell firing
 LOSS_WEIGHT_MSE = 1.0
 LOSS_WEIGHT_FR = 0.1
 LOSS_WEIGHT_SPARSITY = 0.05
-WTA_WEIGHT = 1e-1                    # decorrelation penalty weight
+WTA_WEIGHT = 1e-2                    # decorrelation penalty weight
+L2_GSYN_WEIGHT = 1e-2                # L2 penalty on gsyn_max
 
 # ============================================================
 # Population parameters (dimensional mode — loaded from CSV)

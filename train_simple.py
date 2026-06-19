@@ -160,7 +160,8 @@ class BorderMeanFieldNetwork(Layer):
             shape=(self.pre, self.post),
             initializer=tf.constant_initializer(params['gsyn_max']),
             trainable=config.TRAIN_SYNAPSE_GMAX,
-            constraint=MinMax(0.0, 10.0),
+            constraint=tf.keras.constraints.NonNeg(),
+            regularizer=tf.keras.regularizers.l2(config.L2_GSYN_WEIGHT),
             name='gsyn_max',
         )
         self.tau_f = self.add_weight(
