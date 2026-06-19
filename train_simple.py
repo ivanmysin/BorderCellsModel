@@ -153,13 +153,14 @@ class BorderMeanFieldNetwork(Layer):
             shape=(self.units,),
             initializer=tf.constant_initializer(params['I_ext']),
             trainable=config.TRAIN_POP_IEXT,
+            constraint=MinMax(-0.5, 0.5),
             name='I_ext',
         )
         self.gsyn_max = self.add_weight(
             shape=(self.pre, self.post),
             initializer=tf.constant_initializer(params['gsyn_max']),
             trainable=config.TRAIN_SYNAPSE_GMAX,
-            constraint=tf.keras.constraints.NonNeg(),
+            constraint=MinMax(0.0, 10.0),
             name='gsyn_max',
         )
         self.tau_f = self.add_weight(

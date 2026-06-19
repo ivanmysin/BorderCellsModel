@@ -158,7 +158,7 @@ F_MAX_BORDER = 15.0            # Hz, peak border cell firing
 LOSS_WEIGHT_MSE = 1.0
 LOSS_WEIGHT_FR = 0.1
 LOSS_WEIGHT_SPARSITY = 0.05
-WTA_WEIGHT = 1                    # decorrelation penalty weight
+WTA_WEIGHT = 1e-1                    # decorrelation penalty weight
 
 # ============================================================
 # Population parameters (dimensional mode — loaded from CSV)
