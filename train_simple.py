@@ -216,7 +216,7 @@ class BorderMeanFieldNetwork(Layer):
     def _deriv(self, r, v, w, A):
         g_syn = self.gsyn_max * A
         g_syn_tot = tf.reduce_sum(g_syn, axis=1)
-        I_syn = tf.reduce_sum(g_syn * (self.e_r - v), axis=1)
+        I_syn = tf.reduce_sum(g_syn * (self.e_r[tf.newaxis, :, :] - v[:, tf.newaxis, :]), axis=1)
         drdt = (self.Delta_I / self.PI
                 + 2.0 * r * v
                 - (self.alpha + g_syn_tot) * r) / self.tau_pop
@@ -337,7 +337,7 @@ def build_model(lr = 1e-3):
     model = Model(inputs, out)
 
     def loss_with_reg(y_true, y_pred):
-        return (tf.keras.losses.MeanSquaredError()(    # tf.keras.losses.MeanSquaredLogarithmicError()
+        return (tf.keras.losses.MeanSquaredLogarithmicError()(    #
                     y_true, y_pred[..., :4])
                 + config.WTA_WEIGHT * decorrelation_penalty(y_pred))
 
