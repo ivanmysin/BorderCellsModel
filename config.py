@@ -75,7 +75,7 @@ N_TRIALS = 180                  # ~30 min total = 180 trials × 10 s
 BATCH_SIZE = 4 # 100
 N_BATCHES = 100
 LEARNING_RATE = 5e-3
-N_BATCHES_PER_EPOCH = 200      # random batches sampled per epoch (dataset has ~600)
+N_BATCHES_PER_EPOCH = 4      # random batches sampled per epoch (dataset has ~600)
 GRAD_METHOD = "bptt"           # "bptt" | "adjoint"
 INTEGRATOR = "rk4"            # "euler" | "heun" | "rk4"
 

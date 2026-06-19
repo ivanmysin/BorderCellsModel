@@ -86,8 +86,8 @@ def main():
     load_weights(model, args.weights)
 
     print("Running model (state propagates across batches)...")
-    rates_all = np.zeros((n_run, 1, T, config.N_POP_UNITS), dtype=np.float32)
-    targets_all = np.zeros((n_run, 1, T, 4), dtype=np.float32)
+    rates_all = np.zeros((n_run, T, config.N_POP_UNITS), dtype=np.float32)
+    targets_all = np.zeros((n_run, T, 4), dtype=np.float32)
     t_start = time.time()
     for i, b in enumerate(range(start, end)):
         t0 = time.time()

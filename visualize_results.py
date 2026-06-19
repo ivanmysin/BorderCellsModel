@@ -138,11 +138,11 @@ def visualize_results(training_path=None, dynamics_path=None,
 
     wall_names = ['N', 'S', 'E', 'W']
     fig, axes = plt.subplots(2, 2, figsize=(14, 8))
-    t_first = np.arange(rates.shape[2]) * config.DT / 1000.0
+    t_first = np.arange(rates.shape[1]) * config.DT / 1000.0
     for j, (ax, wall) in enumerate(zip(axes.flat, wall_names)):
-        ax.plot(t_first, targets[10, 0, :, j], label='Target',
+        ax.plot(t_first, targets[3, :, j], label='Target',
                 linewidth=1.5, color='tab:green', alpha=0.8)
-        ax.plot(t_first, rates[10, 0, :, j], label='Predicted',
+        ax.plot(t_first, rates[3, :, j], label='Predicted',
                 linewidth=1.0, color='tab:red', linestyle='--', alpha=0.8)
         ax.set_title(f'Border_{wall} (batch {start_batch})')
         ax.set_xlabel('Time (s)')
