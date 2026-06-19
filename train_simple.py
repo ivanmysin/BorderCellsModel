@@ -329,10 +329,10 @@ def decorrelation_penalty(y_pred):
     return tf.reduce_mean(off_sum / denom)
 
 
-def build_model(lr = 1e-3):
+def build_model(lr = 1e-3, batch_size = 1):
     params = gather_params()
-    inputs = Input(shape=(None, config.N_INPUTS), batch_size=config.BATCH_SIZE)
-    cell = BorderMeanFieldNetwork(params, dt_dim=config.DT, batch_size=config.BATCH_SIZE)
+    inputs = Input(shape=(None, config.N_INPUTS), batch_size=batch_size)
+    cell = BorderMeanFieldNetwork(params, dt_dim=config.DT, batch_size=batch_size)
     rnn = RNN(cell, return_sequences=True, stateful=True, name='border_rnn')
     out = rnn(inputs)
     model = Model(inputs, out)
@@ -496,7 +496,7 @@ def train(dataset_path=None, n_epochs=None, learning_rate=None,
 
 
     print("Building model...")
-    model = build_model(lr)
+    model = build_model(lr, batch_size=config.BATCH_SIZE)
     n_vars = sum(int(np.prod(v.shape)) for v in model.trainable_variables)
     print(f"  Trainable parameters: {n_vars}")
     print(f"  Trainable variables: {[v.name for v in model.trainable_variables]}")
