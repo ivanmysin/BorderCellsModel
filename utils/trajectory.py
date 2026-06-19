@@ -42,7 +42,9 @@ class TrajectoryGenerator:
             }
         )
 
-        n_steps = int(duration / self.dt)
+        n_steps = int( duration / self.dt )
+        print('n_steps =', n_steps)
+
         for _ in range(n_steps):
             agent.update()
 
@@ -89,8 +91,13 @@ def interpolate_trajectory(traj: dict, target_dt: float) -> dict:
         dict with same keys at target_dt resolution
     """
     old_t = traj["t"]
-    total_time = old_t[-1]
-    n_new = int(round(total_time / target_dt)) + 1
+    total_time = np.ceil(old_t[-1])
+
+    # print('total_time =', total_time)
+    n_new = int( total_time / target_dt )
+
+    print('n_new_steps =', n_new)
+
     new_t = np.arange(n_new, dtype=np.float64) * target_dt
 
     out = {}

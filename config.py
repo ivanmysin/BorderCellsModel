@@ -72,7 +72,7 @@ SIM_DT = DT                     # neural timestep
 UP_SAMPLE_FACTOR = 1            # no upsampling — trajectory already at SIM_DT
 TRIAL_DURATION = 10.0           # 10 s per trial
 N_TRIALS = 180                  # ~30 min total = 180 trials × 10 s
-BATCH_SIZE = 1
+BATCH_SIZE = 2
 N_BATCHES = 100
 LEARNING_RATE = 1e-3
 N_BATCHES_PER_EPOCH = 200      # random batches sampled per epoch (dataset has ~600)
@@ -84,7 +84,7 @@ INTEGRATOR = "rk4"            # "euler" | "heun" | "rk4"
 # ============================================================
 BATCH_DURATION = 1.0            # seconds per batch
 N_PARALLEL_BATCHES = 10         # how many batches to load in RAM
-N_EPOCHS = 100                  # full passes over all batches
+N_EPOCHS = 1000                 # full passes over all batches
 
 # ============================================================
 # Vectorized population

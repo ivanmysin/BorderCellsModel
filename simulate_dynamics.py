@@ -1,11 +1,11 @@
 """Run trained model on the dataset and save firing-rate dynamics.
 
-Uses train_simple.build_model() and train_simple.load_pretrained() to
-guarantee the architecture and weight loading match the trained model.
+Uses train_simple.build_model() to guarantee the architecture matches
+the trained model. Loads .weights.h5 checkpoints or legacy training.h5.
 State propagates across batches (no reset), as in the training run.
 
 Usage:
-    python simulate_dynamics.py [--weights results/training.h5]
+    python simulate_dynamics.py [--weights results/checkpoints/latest.weights.h5]
                                 [--output results/dynamics.h5]
                                 [--start-batch 0] [--end-batch N]
 """
@@ -23,10 +23,25 @@ import config
 import train_simple
 
 
+def load_weights(model, path):
+    """Load weights from .weights.h5 or legacy training.h5."""
+    if not os.path.exists(path):
+        print(f"  WARNING: '{path}' not found, using initial values")
+        return
+    print(f"Loading weights from {path}...")
+    if path.endswith('.weights.h5'):
+        model.load_weights(path)
+        print(f"  Loaded (checkpoint format)")
+    else:
+        n_loaded = train_simple.load_pretrained(model, path)
+        print(f"  Loaded {n_loaded} trainable variable(s) (legacy format)")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--weights', type=str, default='results/training.h5',
-                        help='HDF5 with saved trainable weights (from train_simple).')
+    parser.add_argument('--weights', type=str,
+                        default='results/checkpoints/latest.weights.h5',
+                        help='Path to .weights.h5 checkpoint or legacy training.h5')
     parser.add_argument('--dataset', type=str, default=None,
                         help='Path to dataset.h5; default = alongside trajectory.h5')
     parser.add_argument('--output', type=str, default='results/dynamics.h5',
@@ -52,8 +67,8 @@ def main():
     print(f"Loading dataset from {ds_path}...")
     X, Y = train_simple.load_all_batches(ds_path)
     n_batches = X.shape[0]
-    T = X.shape[2]
-    print(f"  n_batches={n_batches}, T={T}, F_in={X.shape[3]}")
+    T = X.shape[1]
+    print(f"  n_batches={n_batches}, T={T}, F_in={X.shape[2]}")
 
     start = max(0, args.start_batch)
     end = args.end_batch if args.end_batch is not None else n_batches
@@ -68,12 +83,7 @@ def main():
     n_vars = sum(int(np.prod(v.shape)) for v in model.trainable_variables)
     print(f"  Trainable parameters: {n_vars}")
 
-    if args.weights and os.path.exists(args.weights):
-        print(f"Loading weights from {args.weights}...")
-        n_loaded = train_simple.load_pretrained(model, args.weights)
-        print(f"  Loaded {n_loaded} trainable variable(s)")
-    else:
-        print(f"WARNING: weights '{args.weights}' not found, using initial values")
+    load_weights(model, args.weights)
 
     print("Running model (state propagates across batches)...")
     rates_all = np.zeros((n_run, 1, T, config.N_POP_UNITS), dtype=np.float32)
@@ -81,7 +91,7 @@ def main():
     t_start = time.time()
     for i, b in enumerate(range(start, end)):
         t0 = time.time()
-        pred = model.predict(X[b], verbose=0)
+        pred = model.predict(X[b:b+1], verbose=0)
         rates_all[i] = pred
         targets_all[i] = Y[b]
         if (i + 1) % 50 == 0 or i == 0:

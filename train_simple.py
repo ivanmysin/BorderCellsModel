@@ -121,7 +121,7 @@ class BorderMeanFieldNetwork(Layer):
     Trainable: gsyn_max, I_ext (others frozen by config.TRAIN_* flags).
     """
 
-    def __init__(self, params, dt_dim=0.1, **kwargs):
+    def __init__(self, params, dt_dim=0.1, batch_size=1, **kwargs):
         super().__init__(**kwargs)
         self.dt_dim = float(dt_dim)
         self.units = 6
@@ -192,12 +192,12 @@ class BorderMeanFieldNetwork(Layer):
         )
 
         self.state_size = [
-            tf.TensorShape([1, self.units]),
-            tf.TensorShape([1, self.units]),
-            tf.TensorShape([1, self.units]),
-            tf.TensorShape([1, self.pre, self.post]),
-            tf.TensorShape([1, self.pre, self.post]),
-            tf.TensorShape([1, self.pre, self.post]),
+            tf.TensorShape([batch_size, self.units]),
+            tf.TensorShape([batch_size, self.units]),
+            tf.TensorShape([batch_size, self.units]),
+            tf.TensorShape([batch_size, self.pre, self.post]),
+            tf.TensorShape([batch_size, self.pre, self.post]),
+            tf.TensorShape([batch_size, self.pre, self.post]),
         ]
         self.output_size = self.units
 
@@ -328,10 +328,10 @@ def decorrelation_penalty(y_pred):
     return tf.reduce_mean(off_sum / denom)
 
 
-def build_model():
+def build_model(lr = 1e-3):
     params = gather_params()
-    inputs = Input(shape=(None, config.N_INPUTS), batch_size=1)
-    cell = BorderMeanFieldNetwork(params, dt_dim=config.DT)
+    inputs = Input(shape=(None, config.N_INPUTS), batch_size=config.BATCH_SIZE)
+    cell = BorderMeanFieldNetwork(params, dt_dim=config.DT, batch_size=config.BATCH_SIZE)
     rnn = RNN(cell, return_sequences=True, stateful=True, name='border_rnn')
     out = rnn(inputs)
     model = Model(inputs, out)
@@ -342,7 +342,7 @@ def build_model():
                 + config.WTA_WEIGHT * decorrelation_penalty(y_pred))
 
     model.compile(
-        optimizer=Adam(learning_rate=config.LEARNING_RATE, clipvalue=10.0),
+        optimizer=Adam(learning_rate=lr, clipvalue=10.0),
         loss=loss_with_reg,
     )
     return model
@@ -495,7 +495,7 @@ def train(dataset_path=None, n_epochs=None, learning_rate=None,
 
 
     print("Building model...")
-    model = build_model()
+    model = build_model(lr)
     n_vars = sum(int(np.prod(v.shape)) for v in model.trainable_variables)
     print(f"  Trainable parameters: {n_vars}")
     print(f"  Trainable variables: {[v.name for v in model.trainable_variables]}")
@@ -513,7 +513,7 @@ def train(dataset_path=None, n_epochs=None, learning_rate=None,
     history = model.fit(
         X, Y,
         epochs=n_epochs,
-        batch_size=1,
+        batch_size=config.BATCH_SIZE,
         verbose=2,
         callbacks=callbacks,
     )
