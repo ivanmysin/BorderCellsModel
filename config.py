@@ -74,7 +74,7 @@ TRIAL_DURATION = 10.0           # 10 s per trial
 N_TRIALS = 180                  # ~30 min total = 180 trials × 10 s
 BATCH_SIZE = 100
 N_BATCHES = 100
-LEARNING_RATE = 5e-2
+LEARNING_RATE = 5e-3
 N_BATCHES_PER_EPOCH = 200      # random batches sampled per epoch (dataset has ~600)
 GRAD_METHOD = "bptt"           # "bptt" | "adjoint"
 INTEGRATOR = "rk4"            # "euler" | "heun" | "rk4"
@@ -158,7 +158,7 @@ F_MAX_BORDER = 15.0            # Hz, peak border cell firing
 LOSS_WEIGHT_MSE = 1.0
 LOSS_WEIGHT_FR = 0.1
 LOSS_WEIGHT_SPARSITY = 0.05
-WTA_WEIGHT = 1e-3                    # decorrelation penalty weight
+WTA_WEIGHT = 1                    # decorrelation penalty weight
 
 # ============================================================
 # Population parameters (dimensional mode — loaded from CSV)
