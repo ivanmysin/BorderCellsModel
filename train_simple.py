@@ -355,33 +355,35 @@ def load_pretrained(model, path):
     if not os.path.exists(path):
         print(f"  No pretrained file at {path}, starting from scratch.")
         return 0
-    with h5py.File(path, 'r') as f:
-        if 'parameters' not in f:
-            print(f"  No 'parameters' group in {path}, starting from scratch.")
-            return 0
-        grp = f['parameters']
-        var_map = {}
-        for v in model.trainable_variables:
-            for cand in (v.name,
-                         v.name.replace(':', '_').replace('/', '_'),
-                         v.name.split('/')[-1].split(':')[0]):
-                var_map.setdefault(cand, v)
-        loaded = 0
-        for saved_name in grp.keys():
-            if saved_name not in var_map:
-                print(f"  WARNING: '{saved_name}' in file but no matching variable in model")
-                continue
-            v = var_map[saved_name]
-            saved_shape = grp[saved_name].shape
-            if tuple(saved_shape) != tuple(v.shape):
-                print(f"  WARNING: '{saved_name}' shape mismatch: "
-                      f"saved={saved_shape}, model={tuple(v.shape)}")
-                continue
-            v.assign(grp[saved_name][:])
-            loaded += 1
-            print(f"  Loaded {saved_name}: shape={tuple(v.shape)}")
-    print(f"  Loaded {loaded} variable(s) from {path}.")
-    return loaded
+
+    model.load_weights(path)
+    # with h5py.File(path, 'r') as f:
+    #     if 'parameters' not in f:
+    #         print(f"  No 'parameters' group in {path}, starting from scratch.")
+    #         return 0
+    #     grp = f['parameters']
+    #     var_map = {}
+    #     for v in model.trainable_variables:
+    #         for cand in (v.name,
+    #                      v.name.replace(':', '_').replace('/', '_'),
+    #                      v.name.split('/')[-1].split(':')[0]):
+    #             var_map.setdefault(cand, v)
+    #     loaded = 0
+    #     for saved_name in grp.keys():
+    #         if saved_name not in var_map:
+    #             print(f"  WARNING: '{saved_name}' in file but no matching variable in model")
+    #             continue
+    #         v = var_map[saved_name]
+    #         saved_shape = grp[saved_name].shape
+    #         if tuple(saved_shape) != tuple(v.shape):
+    #             print(f"  WARNING: '{saved_name}' shape mismatch: "
+    #                   f"saved={saved_shape}, model={tuple(v.shape)}")
+    #             continue
+    #         v.assign(grp[saved_name][:])
+    #         loaded += 1
+    #         print(f"  Loaded {saved_name}: shape={tuple(v.shape)}")
+    #print(f"  Loaded {loaded} variable(s) from {path}.")
+    #return loaded
 
 
 def setup_gpu():

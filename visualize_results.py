@@ -139,6 +139,9 @@ def visualize_results(training_path=None, dynamics_path=None,
     wall_names = ['N', 'S', 'E', 'W']
     fig, axes = plt.subplots(2, 2, figsize=(14, 8))
     t_first = np.arange(rates.shape[1]) * config.DT / 1000.0
+
+
+
     for j, (ax, wall) in enumerate(zip(axes.flat, wall_names)):
         ax.plot(t_first, targets[3, :, j], label='Target',
                 linewidth=1.5, color='tab:green', alpha=0.8)
