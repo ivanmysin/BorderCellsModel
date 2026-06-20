@@ -17,7 +17,7 @@ import argparse
 import numpy as np
 import h5py
 import matplotlib
-matplotlib.use('Agg')
+# matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from scipy.ndimage import gaussian_filter
 
@@ -60,6 +60,13 @@ def visualize_results(training_path=None, dynamics_path=None,
     print(f"  rates shape: {rates.shape}, targets shape: {targets.shape}")
 
     rates_flat = rates.reshape(-1, rates.shape[-1])
+
+    fig, axes = plt.subplots(2, 3, figsize=(16, 10))
+    for j, (ax, name) in enumerate(zip(axes.flat, config.UNIT_NAMES)):
+        ax.plot(rates_flat[:, j], label=name)
+    plt.legend()
+    plt.show()
+
     targets_flat = targets.reshape(-1, targets.shape[-1])
     n_total_steps = rates_flat.shape[0]
     T = rates.shape[2]
