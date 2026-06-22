@@ -333,11 +333,14 @@ def load_all_batches(dataset_path):
 
 
 def train(dataset_path=None, n_epochs=None, learning_rate=None,
-          batches_per_epoch=None, seed=None, resume=None, n_layers=2):
+          batches_per_epoch=None, seed=None, resume=None, n_layers=1, batch_size=None):
     ds_path = dataset_path or os.path.join(
         os.path.dirname(config.TRAJECTORY_HDF5), 'dataset.h5')
     n_epochs = n_epochs or config.N_EPOCHS
     lr = learning_rate or config.LEARNING_RATE
+    batch_size = batch_size or config.BATCH_SIZE
+
+
     if seed is not None:
         config.RANDOM_SEED = seed
     tf.random.set_seed(config.RANDOM_SEED)
@@ -350,7 +353,7 @@ def train(dataset_path=None, n_epochs=None, learning_rate=None,
     X, Y = load_all_batches(ds_path)
 
     print(f"Building Wilson-Cowan model ({n_layers} layers)...")
-    model = build_model(lr=lr, batch_size=config.BATCH_SIZE, n_layers=n_layers)
+    model = build_model(lr=lr, batch_size=batch_size, n_layers=n_layers)
     n_vars = sum(int(np.prod(v.shape)) for v in model.trainable_variables)
     print(f"  Trainable parameters: {n_vars}")
     for v in model.trainable_variables:
@@ -366,7 +369,7 @@ def train(dataset_path=None, n_epochs=None, learning_rate=None,
     history = model.fit(
         X, Y,
         epochs=n_epochs,
-        batch_size=config.BATCH_SIZE,
+        batch_size=batch_size,
         verbose=2,
         callbacks=callbacks,
     )
@@ -382,11 +385,12 @@ def main():
     parser.add_argument('--lr', type=float, default=None)
     parser.add_argument('--seed', type=int, default=None)
     parser.add_argument('--resume', type=str, default=None)
+    parser.add_argument('--batch_size', type=int, default=None)
     parser.add_argument('--layers', type=int, default=2,
                         help='Number of WC layers (default: 2)')
     args = parser.parse_args()
     train(args.dataset, args.epochs, args.lr, seed=args.seed, resume=args.resume,
-          n_layers=args.layers)
+          n_layers=args.layers, batch_size=args.batch_size)
 
 
 if __name__ == '__main__':
