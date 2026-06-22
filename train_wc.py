@@ -277,13 +277,13 @@ def build_model(lr=1e-3, batch_size=1, n_layers=2):
     params1 = gather_params(n_pre=config.N_POP_UNITS + config.N_INPUTS)
     cell1 = WilsonCowanNetwork(params1, dt_dim=config.DT, batch_size=batch_size,
                                name='wc_layer1')
-    x = RNN(cell1, return_sequences=True, stateful=True, name='wc_rnn1')(inputs)
+    x = RNN(cell1, return_sequences=True, stateful=False, name='wc_rnn1')(inputs)
 
     if n_layers >= 2:
         params2 = gather_params(n_pre=config.N_POP_UNITS)
         cell2 = WilsonCowanNetwork(params2, dt_dim=config.DT, batch_size=batch_size,
                                    n_pre=config.N_POP_UNITS, name='wc_layer2')
-        x = RNN(cell2, return_sequences=True, stateful=True, name='wc_rnn2')(x)
+        x = RNN(cell2, return_sequences=True, stateful=False, name='wc_rnn2')(x)
 
     model = Model(inputs, x)
 
