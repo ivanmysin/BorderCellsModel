@@ -46,10 +46,16 @@ def visualize_results(training_path=None, dynamics_path=None,
     out_dir = output_dir or config.RESULTS_DIR
     os.makedirs(out_dir, exist_ok=True)
 
-    print(f"Loading training history from {train_path}...")
-    with h5py.File(train_path, 'r') as f:
-        loss_history = f['loss_history'][:]
-        trained_params = {k: v[:] for k, v in f['parameters'].items()}
+    loss_history = None
+    trained_params = {}
+    if os.path.exists(train_path):
+        print(f"Loading training history from {train_path}...")
+        with h5py.File(train_path, 'r') as f:
+            loss_history = f['loss_history'][:]
+            if 'parameters' in f:
+                trained_params = {k: v[:] for k, v in f['parameters'].items()}
+    else:
+        print(f"  No training file at {train_path}, skipping loss curve & weights plot.")
 
     print(f"Loading dynamics from {dyn_path}...")
     with h5py.File(dyn_path, 'r') as f:
@@ -91,17 +97,18 @@ def visualize_results(training_path=None, dynamics_path=None,
         y_all = traj_fine['y'][offset:offset + n_total_steps]
     print(f"  Total steps: {n_total_steps}")
 
-    fig, ax = plt.subplots(figsize=(8, 4))
-    ax.plot(loss_history, linewidth=1.5, color='tab:blue')
-    ax.set_xlabel('Epoch')
-    ax.set_ylabel('Loss (MSLE)')
-    ax.set_title(f'Training Loss (final={loss_history[-1]:.6f}, '
-                 f'best={min(loss_history):.6f})')
-    ax.grid(True, alpha=0.3)
-    fig.savefig(os.path.join(out_dir, 'loss_curve.png'),
-                bbox_inches='tight', dpi=150)
-    plt.close(fig)
-    print("  Saved loss_curve.png")
+    if loss_history is not None:
+        fig, ax = plt.subplots(figsize=(8, 4))
+        ax.plot(loss_history, linewidth=1.5, color='tab:blue')
+        ax.set_xlabel('Epoch')
+        ax.set_ylabel('Loss')
+        ax.set_title(f'Training Loss (final={loss_history[-1]:.6f}, '
+                     f'best={min(loss_history):.6f})')
+        ax.grid(True, alpha=0.3)
+        fig.savefig(os.path.join(out_dir, 'loss_curve.png'),
+                    bbox_inches='tight', dpi=150)
+        plt.close(fig)
+        print("  Saved loss_curve.png")
 
     fig, axes = plt.subplots(2, 3, figsize=(16, 10))
     for j, (ax, name) in enumerate(zip(axes.flat, config.UNIT_NAMES)):

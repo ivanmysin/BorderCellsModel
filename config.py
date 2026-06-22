@@ -216,10 +216,10 @@ TRAIN_SYNAPSE_TAU_d = True
 
 
 TRAIN_POP_IEXT = True
-TRAIN_POP_DELTA_I = True
+TRAIN_POP_DELTA_I = False
 
 # ============================================================
 # Output
 # ============================================================
-SAVE_EVERY_N_TRIALS = 30
+SAVE_EVERY_N_TRIALS = 10
 PRINT_EVERY_N_TRIALS = 5

@@ -55,8 +55,8 @@ def normalize(X, Y):
 
 def build_gru(n_inputs, n_outputs, batch_size=1):
     inputs = Input(shape=(None, n_inputs), batch_size=batch_size)
-    x = GRU(16, return_sequences=True, name='gru_1')(inputs)
-    x = GRU(16, return_sequences=True, name='gru_2')(x)
+    x = GRU(8, return_sequences=True, name='gru_1')(inputs)
+    # x = GRU(16, return_sequences=True, name='gru_2')(x)
     out = Dense(n_outputs, activation='sigmoid')(x)
     model = Model(inputs, out)
     model.compile(optimizer='adam', loss='mse')
