@@ -111,9 +111,9 @@ class WilsonCowanNetwork(Layer):
         self.e_r = tf.constant(params['e_r'], dtype=tf.float32)
 
         ei_sign = np.ones((self.pre, self.post), dtype=np.float32)
-        for i, name in enumerate(config.UNIT_NAMES):
-            if config.UNIT_TYPE[name] in ('Basket', 'Axoaxonic'):
-                ei_sign[i, :] = -1.0
+        # for i, name in enumerate(config.UNIT_NAMES):
+        #     if config.UNIT_TYPE[name] in ('Basket', 'Axoaxonic'):
+        #         ei_sign[i, :] = -1.0
         self.ei_sign = tf.constant(ei_sign, dtype=tf.float32)
 
         wc_tau = np.array([12.0, 12.0, 12.0, 12.0, 10.0, 10.0], dtype=np.float32)
@@ -136,7 +136,7 @@ class WilsonCowanNetwork(Layer):
             shape=(self.pre, self.post),
             initializer=tf.constant_initializer(params['gsyn_max']),
             trainable=config.TRAIN_SYNAPSE_GMAX,
-            constraint=tf.keras.constraints.NonNeg(),
+            # constraint=tf.keras.constraints.NonNeg(),
             # regularizer=tf.keras.regularizers.l2(config.L2_GSYN_WEIGHT),
             name='gsyn_max',
         )
