@@ -200,12 +200,8 @@ def build_inp_Uinc_matrix() -> np.ndarray:
 
 
 def build_inp_pconn_matrix() -> np.ndarray:
-    """Build [21,6] pconn matrix for input connections."""
-    m = np.zeros((config.N_INPUTS, config.N_POP_UNITS), dtype=np.float64)
-    for i, inp_name in enumerate(_INPUT_NAMES):
-        for j in _input_targets(inp_name):
-            m[i, j] = 1.0
-    return m
+    """Build [21,6] pconn matrix for input connections (all-to-all)."""
+    return np.ones((config.N_INPUTS, config.N_POP_UNITS), dtype=np.float64)
 
 
 def build_inp_e_r_matrix() -> np.ndarray:

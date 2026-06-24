@@ -322,6 +322,35 @@ def decorrelation_penalty(y_pred):
     return tf.reduce_mean(off_sum / denom)
 
 
+def sharpening_loss(y_pred):
+    """Encourage sparse border-cell activity (winner-take-all).
+
+    At each time step, penalise high mean/max ratio → forces competition
+    between border cells so that only one (or a few) fire strongly.
+    This creates conditions where inhibitory interneurons are useful.
+    """
+    border = y_pred[..., :4]                          # [batch, T, 4]
+    max_val = tf.reduce_max(border, axis=-1)           # [batch, T]
+    mean_val = tf.reduce_mean(border, axis=-1)         # [batch, T]
+    sparsity = mean_val / (max_val + 1e-6)            # small ⇒ sparse
+    return tf.reduce_mean(sparsity)
+
+
+def ei_balance_loss(y_pred):
+    """Inhibitory activity should scale with excitatory activity.
+
+    Targets: inhibitory_mean = EI_BALANCE_TARGET * excitatory_mean.
+    Gives gradient to Basket/Axo even when they start near zero.
+    """
+    exc = y_pred[..., :4]                              # border cells
+    inhib = y_pred[..., 4:6]                           # Basket, Axo
+    exc_mean = tf.reduce_mean(tf.abs(exc), axis=[-1, -2])
+    inhib_mean = tf.reduce_mean(tf.abs(inhib), axis=[-1, -2])
+    target_ratio = 0.3
+    actual_ratio = inhib_mean / (exc_mean + 1e-6)
+    return tf.reduce_mean((actual_ratio - target_ratio) ** 2)
+
+
 def build_model(lr=1e-3, batch_size=1, n_layers=2):
     inputs = Input(shape=(None, config.N_INPUTS), batch_size=batch_size)
 
@@ -340,10 +369,11 @@ def build_model(lr=1e-3, batch_size=1, n_layers=2):
     model = Model(inputs, x)
 
     def loss_with_reg(y_true, y_pred):
-
-        L = tf.keras.losses.MeanSquaredError()(y_true, y_pred[..., :4]) + config.WTA_WEIGHT * decorrelation_penalty(y_pred)
-
-        return L
+        L_mse = tf.keras.losses.MeanSquaredError()(y_true, y_pred[..., :4])
+        L_wta = config.WTA_WEIGHT * decorrelation_penalty(y_pred)
+        L_sharp = config.LOSS_WEIGHT_SHARPENING * sharpening_loss(y_pred)
+        L_ei = config.LOSS_WEIGHT_EI_BALANCE * ei_balance_loss(y_pred)
+        return L_mse + L_wta + L_sharp + L_ei
 
     model.compile(
         optimizer=Adam(learning_rate=lr, clipnorm=1.0),
