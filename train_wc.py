@@ -137,7 +137,7 @@ class WilsonCowanNetwork(Layer):
         self._theta_tau_pop = self.add_weight(
             shape=(self.units,),
             initializer=tf.constant_initializer(theta_tau_pop),
-            trainable=True,
+            trainable=False,
             name='theta_tau_pop',
         )
 
@@ -326,6 +326,7 @@ def build_model(lr=1e-3, batch_size=1, n_layers=2):
     inputs = Input(shape=(None, config.N_INPUTS), batch_size=batch_size)
 
     params1 = gather_params(n_pre=config.N_POP_UNITS + config.N_INPUTS)
+    params1['gsyn_max'] *= 10
     cell1 = WilsonCowanNetwork(params1, dt_dim=config.DT, batch_size=batch_size,
                                name='wc_layer1')
     x = RNN(cell1, return_sequences=True, stateful=False, name='wc_rnn1')(inputs)
