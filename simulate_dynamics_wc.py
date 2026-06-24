@@ -95,7 +95,7 @@ def main():
     for i, b in enumerate(range(start, end)):
         t0 = time.time()
         pred = model.predict(X[b:b+1], verbose=0)
-        rates_all[i] = pred
+        rates_all[i] = np.asarray(pred)
         targets_all[i] = Y[b]
         if (i + 1) % 50 == 0 or i == 0:
             elapsed = time.time() - t_start

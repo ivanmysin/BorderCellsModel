@@ -75,7 +75,7 @@ def visualize_results(training_path=None, dynamics_path=None,
 
     targets_flat = targets.reshape(-1, targets.shape[-1])
     n_total_steps = rates_flat.shape[0]
-    T = rates.shape[2]
+    T = rates.shape[1]
 
     print(f"Loading trajectory from {traj_path}...")
     traj = load_trajectory_from_hdf5(traj_path)
@@ -157,9 +157,9 @@ def visualize_results(training_path=None, dynamics_path=None,
 
 
     for j, (ax, wall) in enumerate(zip(axes.flat, wall_names)):
-        ax.plot(t_first, targets[3, :, j], label='Target',
+        ax.plot(t_first, targets[0, :, j], label='Target',
                 linewidth=1.5, color='tab:green', alpha=0.8)
-        ax.plot(t_first, rates[3, :, j], label='Predicted',
+        ax.plot(t_first, rates[0, :, j], label='Predicted',
                 linewidth=1.0, color='tab:red', linestyle='--', alpha=0.8)
         ax.set_title(f'Border_{wall} (batch {start_batch})')
         ax.set_xlabel('Time (s)')

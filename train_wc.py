@@ -247,8 +247,8 @@ class WilsonCowanNetwork(Layer):
         Uinc = self._get_Uinc()
 
 
-        FRpre_unit = E * self.dt_dim #  tf.clip_by_value(, 0.0, 0.5)
-        FRpre_ext =  ext * self.dt_dim  #tf.clip_by_value(ext * 0.1, 0.0, 0.5)
+        FRpre_unit = E * self.dt_dim * 0.001 #  tf.clip_by_value(, 0.0, 0.5)
+        FRpre_ext =  ext * self.dt_dim * 0.001 #tf.clip_by_value(ext * 0.1, 0.0, 0.5)
         if self.pre == self.units:
             FRpre = FRpre_ext
         else:

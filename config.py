@@ -160,8 +160,8 @@ LOSS_WEIGHT_FR = 0.1
 LOSS_WEIGHT_SPARSITY = 0.05
 WTA_WEIGHT = 1e-2                    # decorrelation penalty weight
 L2_GSYN_WEIGHT = 1e-2                # L2 penalty on gsyn_max
-LOSS_WEIGHT_SHARPENING = 0.1         # sparse border-cell activity (winner-take-all)
-LOSS_WEIGHT_EI_BALANCE = 0.1         # inhibitory activity ∝ excitatory activity
+LOSS_WEIGHT_SHARPENING = 0.001         # sparse border-cell activity (winner-take-all)
+LOSS_WEIGHT_EI_BALANCE = 0.001         # inhibitory activity ∝ excitatory activity
 
 # ============================================================
 # Population parameters (dimensional mode — loaded from CSV)
