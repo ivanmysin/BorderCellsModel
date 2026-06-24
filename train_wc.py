@@ -20,7 +20,6 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.keras import Model, Input
 from tensorflow.keras.layers import RNN, Layer
-from tensorflow.keras.constraints import Constraint
 from tensorflow.keras.optimizers import Adam
 import h5py
 
@@ -77,16 +76,26 @@ class CheckpointCallback(tf.keras.callbacks.Callback):
             json.dump(self.loss_history, f, indent=2)
 
 
-class MinMax(Constraint):
-    def __init__(self, min_val=0.0, max_val=float('inf')):
-        self.min_val = float(min_val)
-        self.max_val = float(max_val)
+def _softplus(x):
+    return tf.nn.softplus(x)
 
-    def __call__(self, w):
-        return tf.clip_by_value(w, self.min_val, self.max_val)
 
-    def get_config(self):
-        return {'min_val': self.min_val, 'max_val': self.max_val}
+def _inv_softplus(y):
+    """Inverse softplus: returns x such that softplus(x) = y.  y > 0."""
+    return tf.math.log(tf.math.expm1(tf.maximum(y, 1e-7)))
+
+
+def _inv_softplus_np(y):
+    """NumPy version for weight initialisation."""
+    y = np.maximum(y, 1e-7)
+    return np.log(np.expm1(y))
+
+
+def _inv_sigmoid_np(y, lo=0.0, hi=1.0):
+    """NumPy: find θ such that sigmoid(θ)*(hi-lo)+lo = y."""
+    y_clipped = np.clip(y, lo + 1e-7, hi - 1e-7)
+    frac = (y_clipped - lo) / (hi - lo)
+    return np.log(frac / (1.0 - frac))
 
 
 class WilsonCowanNetwork(Layer):
@@ -100,6 +109,10 @@ class WilsonCowanNetwork(Layer):
     WC_M = 100.0
     WC_SIGMA = 5.0
 
+    # Bounds for Uinc sigmoid mapping
+    UINC_LO = 0.04
+    UINC_HI = 0.7
+
     def __init__(self, params, dt_dim=0.1, batch_size=1, n_pre=None, **kwargs):
         super().__init__(**kwargs)
         self.dt_dim = float(dt_dim)
@@ -111,62 +124,72 @@ class WilsonCowanNetwork(Layer):
         self.e_r = tf.constant(params['e_r'], dtype=tf.float32)
 
         ei_sign = np.ones((self.pre, self.post), dtype=np.float32)
-        # for i, name in enumerate(config.UNIT_NAMES):
-        #     if config.UNIT_TYPE[name] in ('Basket', 'Axoaxonic'):
-        #         ei_sign[i, :] = -1.0
         self.ei_sign = tf.constant(ei_sign, dtype=tf.float32)
 
         wc_tau = np.array([12.0, 12.0, 12.0, 12.0, 10.0, 10.0], dtype=np.float32)
         wc_i_ext = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32)
 
-        self.tau_pop = self.add_weight(
+        # ── Reparameterised weights ──────────────────────────────────
+        # tau_pop: τ = exp(θ), no constraint needed on θ
+        theta_tau_pop = np.log(wc_tau)
+        self._theta_tau_pop = self.add_weight(
             shape=(self.units,),
-            initializer=tf.constant_initializer(wc_tau),
+            initializer=tf.constant_initializer(theta_tau_pop),
             trainable=True,
-            constraint=MinMax(1.0, 200.0),
-            name='tau_pop',
+            name='theta_tau_pop',
         )
+
         self.I_ext = self.add_weight(
             shape=(self.units,),
             initializer=tf.constant_initializer(wc_i_ext),
             trainable=config.TRAIN_POP_IEXT,
             name='I_ext',
         )
-        self.gsyn_max = self.add_weight(
+
+        # gsyn_max: g = softplus(θ), always > 0
+        theta_gsyn = _inv_softplus_np(params['gsyn_max'])
+        self._theta_gsyn = self.add_weight(
             shape=(self.pre, self.post),
-            initializer=tf.constant_initializer(params['gsyn_max']),
+            initializer=tf.constant_initializer(theta_gsyn),
             trainable=config.TRAIN_SYNAPSE_GMAX,
-            # constraint=tf.keras.constraints.NonNeg(),
-            # regularizer=tf.keras.regularizers.l2(config.L2_GSYN_WEIGHT),
-            name='gsyn_max',
+            name='theta_gsyn',
         )
-        self.tau_f = self.add_weight(
+
+        # tau_f: τ_f = exp(θ_f)
+        theta_tau_f = np.log(np.maximum(params['tau_f'], 1e-7))
+        self._theta_tau_f = self.add_weight(
             shape=(self.pre, self.post),
-            initializer=tf.constant_initializer(params['tau_f']),
+            initializer=tf.constant_initializer(theta_tau_f),
             trainable=config.TRAIN_SYNAPSE_TAU_f,
-            constraint=MinMax(6.0, 240.0),
-            name='tau_f',
+            name='theta_tau_f',
         )
-        self.tau_d = self.add_weight(
+
+        # tau_d: τ_d = exp(θ_d)
+        theta_tau_d = np.log(np.maximum(params['tau_d'], 1e-7))
+        self._theta_tau_d = self.add_weight(
             shape=(self.pre, self.post),
-            initializer=tf.constant_initializer(params['tau_d']),
+            initializer=tf.constant_initializer(theta_tau_d),
             trainable=config.TRAIN_SYNAPSE_TAU_d,
-            constraint=MinMax(2.0, 15.0),
-            name='tau_d',
+            name='theta_tau_d',
         )
-        self.tau_r = self.add_weight(
+
+        # tau_r: τ_r = exp(θ_r)
+        theta_tau_r = np.log(np.maximum(params['tau_r'], 1e-7))
+        self._theta_tau_r = self.add_weight(
             shape=(self.pre, self.post),
-            initializer=tf.constant_initializer(params['tau_r']),
+            initializer=tf.constant_initializer(theta_tau_r),
             trainable=config.TRAIN_SYNAPSE_TAU_r,
-            constraint=MinMax(91.0, 1300.0),
-            name='tau_r',
+            name='theta_tau_r',
         )
-        self.Uinc = self.add_weight(
+
+        # Uinc: U = sigmoid(θ) * (HI - LO) + LO  ∈ (LO, HI)
+        theta_Uinc = _inv_sigmoid_np(
+            params['Uinc'], self.UINC_LO, self.UINC_HI)
+        self._theta_Uinc = self.add_weight(
             shape=(self.pre, self.post),
-            initializer=tf.constant_initializer(params['Uinc']),
+            initializer=tf.constant_initializer(theta_Uinc),
             trainable=config.TRAIN_SYNAPSE_U,
-            constraint=MinMax(0.04, 0.7),
-            name='Uinc',
+            name='theta_Uinc',
         )
 
         self.state_size = [
@@ -176,6 +199,25 @@ class WilsonCowanNetwork(Layer):
             tf.TensorShape([batch_size, self.pre, self.post]),
         ]
         self.output_size = self.units
+
+    # ── Transform helpers (θ → physical) ─────────────────────────────
+    def _get_tau_pop(self):
+        return tf.exp(self._theta_tau_pop)
+
+    def _get_gsyn(self):
+        return _softplus(self._theta_gsyn)
+
+    def _get_tau_f(self):
+        return tf.exp(self._theta_tau_f)
+
+    def _get_tau_d(self):
+        return tf.exp(self._theta_tau_d)
+
+    def _get_tau_r(self):
+        return tf.exp(self._theta_tau_r)
+
+    def _get_Uinc(self):
+        return tf.sigmoid(self._theta_Uinc) * (self.UINC_HI - self.UINC_LO) + self.UINC_LO
 
     def get_initial_state(self, batch_size=1):
         return [
@@ -195,34 +237,41 @@ class WilsonCowanNetwork(Layer):
         ext = inputs
         h = self.dt_dim
 
-        dt_per_tau = self.dt_dim / self.tau_pop
-        FRpre_unit = tf.clip_by_value(E * dt_per_tau, 0.0, 0.5)
-        FRpre_ext = tf.clip_by_value(ext * 0.1, 0.0, 0.5)
+        tau_pop = self._get_tau_pop()
+        gsyn = self._get_gsyn()
+        tau_f = self._get_tau_f()
+        tau_d = self._get_tau_d()
+        tau_r = self._get_tau_r()
+        Uinc = self._get_Uinc()
+
+        dt_per_tau = self.dt_dim / tau_pop
+        FRpre_unit = E * self.dt_dim * 0.001 #  tf.clip_by_value(, 0.0, 0.5)
+        FRpre_ext =  ext * self.dt_dim * 0.001 #tf.clip_by_value(ext * 0.1, 0.0, 0.5)
         if self.pre == self.units:
             FRpre = FRpre_ext
         else:
             FRpre = tf.concat([FRpre_unit, FRpre_ext], axis=1)
         FRpre_full = self.pconn[tf.newaxis, :, :] * FRpre[:, :, tf.newaxis]
 
-        g_syn = self.gsyn_max * A * self.ei_sign[tf.newaxis, :, :]
+        g_syn = gsyn * A * self.ei_sign[tf.newaxis, :, :]
         I_syn = tf.reduce_sum(g_syn * FRpre_full, axis=1)
 
         I_total = I_syn + self.I_ext[tf.newaxis, :]
-        E_new = E + (h / self.tau_pop[tf.newaxis, :]) * (
+        E_new = E + (h / tau_pop[tf.newaxis, :]) * (
             -E + self._naka_rushton(I_total))
 
-        exp_d = tf.exp(-self.dt_dim / self.tau_d)
-        exp_r = tf.exp(-self.dt_dim / self.tau_r)
-        exp_f = tf.exp(-self.dt_dim / self.tau_f)
-        tau1r = tf.where(self.tau_d != self.tau_r,
-                         self.tau_d / (self.tau_d - self.tau_r),
+        exp_d = tf.exp(-self.dt_dim / tau_d)
+        exp_r = tf.exp(-self.dt_dim / tau_r)
+        exp_f = tf.exp(-self.dt_dim / tau_f)
+        tau1r = tf.where(tau_d != tau_r,
+                         tau_d / (tau_d - tau_r),
                          1e-13)
 
         a_ = A * exp_d
         r_ = 1.0 + (R - 1.0 + tau1r * A) * exp_r - tau1r * A
         u_ = U * exp_f
         released = U * r_ * FRpre_full
-        U_new = tf.clip_by_value(u_ + self.Uinc * (1.0 - u_) * FRpre_full, 0.0, 1.0)
+        U_new = tf.clip_by_value(u_ + Uinc * (1.0 - u_) * FRpre_full, 0.0, 1.0)
         A_new = tf.clip_by_value(a_ + released, 0.0, 1.0)
         R_new = tf.clip_by_value(r_ - released, 0.0, 1.0)
 
@@ -288,7 +337,10 @@ def build_model(lr=1e-3, batch_size=1, n_layers=2):
     model = Model(inputs, x)
 
     def loss_with_reg(y_true, y_pred):
-        return tf.keras.losses.MeanSquaredError()(y_true, y_pred[..., :4])
+
+        L = tf.keras.losses.MeanSquaredError()(y_true, y_pred[..., :4]) + config.WTA_WEIGHT * decorrelation_penalty(y_pred)
+
+        return
 
     model.compile(
         optimizer=Adam(learning_rate=lr, clipnorm=1.0),
