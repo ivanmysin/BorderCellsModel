@@ -247,8 +247,8 @@ class WilsonCowanNetwork(Layer):
         Uinc = self._get_Uinc()
 
 
-        FRpre_unit = E * self.dt_dim * 0.001 #  tf.clip_by_value(, 0.0, 0.5)
-        FRpre_ext =  ext * self.dt_dim * 0.001 #tf.clip_by_value(ext * 0.1, 0.0, 0.5)
+        FRpre_unit = E * self.dt_dim #  tf.clip_by_value(, 0.0, 0.5)
+        FRpre_ext =  ext * self.dt_dim  #tf.clip_by_value(ext * 0.1, 0.0, 0.5)
         if self.pre == self.units:
             FRpre = FRpre_ext
         else:
@@ -326,7 +326,7 @@ def build_model(lr=1e-3, batch_size=1, n_layers=2):
     inputs = Input(shape=(None, config.N_INPUTS), batch_size=batch_size)
 
     params1 = gather_params(n_pre=config.N_POP_UNITS + config.N_INPUTS)
-    params1['gsyn_max'] *= 100
+    params1['gsyn_max'] *= 5
     cell1 = WilsonCowanNetwork(params1, dt_dim=config.DT, batch_size=batch_size,
                                name='wc_layer1')
     x = RNN(cell1, return_sequences=True, stateful=False, name='wc_rnn1')(inputs)
