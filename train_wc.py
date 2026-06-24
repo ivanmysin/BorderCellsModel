@@ -124,7 +124,9 @@ class WilsonCowanNetwork(Layer):
         self.e_r = tf.constant(params['e_r'], dtype=tf.float32)
 
         ei_sign = np.ones((self.pre, self.post), dtype=np.float32)
+        ei_sign[4:6, :] = -1.0
         self.ei_sign = tf.constant(ei_sign, dtype=tf.float32)
+
 
         wc_tau = np.array([12.0, 12.0, 12.0, 12.0, 10.0, 10.0], dtype=np.float32)
         wc_i_ext = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32)
