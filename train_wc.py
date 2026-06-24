@@ -244,7 +244,7 @@ class WilsonCowanNetwork(Layer):
         tau_r = self._get_tau_r()
         Uinc = self._get_Uinc()
 
-        dt_per_tau = self.dt_dim / tau_pop
+
         FRpre_unit = E * self.dt_dim * 0.001 #  tf.clip_by_value(, 0.0, 0.5)
         FRpre_ext =  ext * self.dt_dim * 0.001 #tf.clip_by_value(ext * 0.1, 0.0, 0.5)
         if self.pre == self.units:
@@ -340,7 +340,7 @@ def build_model(lr=1e-3, batch_size=1, n_layers=2):
 
         L = tf.keras.losses.MeanSquaredError()(y_true, y_pred[..., :4]) + config.WTA_WEIGHT * decorrelation_penalty(y_pred)
 
-        return
+        return L
 
     model.compile(
         optimizer=Adam(learning_rate=lr, clipnorm=1.0),
