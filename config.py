@@ -32,9 +32,10 @@ SYNAPSE_TYPE_MAP = {
     "Axoaxonic→Pyramidal": ("CA1", "CA1 Axo-Axonic", "CA1", "CA1 Pyramidal"),
     "Axoaxonic→Basket":    ("CA1", "CA1 Axo-Axonic", "CA1", "CA1 Basket"),
     "Axoaxonic→Axoaxonic": ("CA1", "CA1 Axo-Axonic", "CA1", "CA1 Axo-Axonic"),
-    "Input→Pyramidal":     ("CA1", "CA1 Back-Projection", "CA1", "CA1 Pyramidal"),
-    "Input→Basket":        ("CA1", "CA1 Back-Projection", "CA1", "CA1 Basket"),
-    "Input→Axoaxonic":     ("CA1", "CA1 Back-Projection", "CA1", "CA1 Axo-Axonic"),
+
+    "Input→Pyramidal":     ("CA1", "CA1 Pyramidal", "CA1", "CA1 Pyramidal"),
+    "Input→Basket":        ("CA1", "CA1 Pyramidal", "CA1", "CA1 Basket"),
+    "Input→Axoaxonic":     ("CA1", "CA1 Pyramidal", "CA1", "CA1 Axo-Axonic"),
 }
 
 # ========================================================
@@ -158,10 +159,10 @@ F_MAX_BORDER = 15.0            # Hz, peak border cell firing
 LOSS_WEIGHT_MSE = 1.0
 LOSS_WEIGHT_FR = 0.1
 LOSS_WEIGHT_SPARSITY = 0.05
-WTA_WEIGHT = 1e-2                    # decorrelation penalty weight
-L2_GSYN_WEIGHT = 1e-2                # L2 penalty on gsyn_max
-LOSS_WEIGHT_SHARPENING = 0.001         # sparse border-cell activity (winner-take-all)
-LOSS_WEIGHT_EI_BALANCE = 0.001         # inhibitory activity ∝ excitatory activity
+WTA_WEIGHT = 1e-1                    # decorrelation penalty weight
+L2_GSYN_WEIGHT = 1e-3                # L2 penalty on gsyn_max
+LOSS_WEIGHT_SHARPENING = 0.1         # sparse border-cell activity (winner-take-all)
+LOSS_WEIGHT_EI_BALANCE = 0.1         # inhibitory activity ∝ excitatory activity
 
 # ============================================================
 # Population parameters (dimensional mode — loaded from CSV)

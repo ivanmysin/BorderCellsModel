@@ -54,7 +54,7 @@ def main():
     parser.add_argument('--start-batch', type=int, default=0)
     parser.add_argument('--end-batch', type=int, default=None)
     parser.add_argument('--seed', type=int, default=None)
-    parser.add_argument('--layers', type=int, default=2)
+    parser.add_argument('--layers', type=int, default=1)
     args = parser.parse_args()
 
     ds_path = args.dataset or os.path.join(
@@ -111,8 +111,8 @@ def main():
 
     os.makedirs(os.path.dirname(args.output) or '.', exist_ok=True)
     with h5py.File(args.output, 'w') as f:
-        f.create_dataset('rates', data=rates_all, compression='gzip')
-        f.create_dataset('targets', data=targets_all, compression='gzip')
+        f.create_dataset('rates', data=rates_all)
+        f.create_dataset('targets', data=targets_all)
         f.attrs['start_batch'] = start
         f.attrs['end_batch'] = end
         f.attrs['n_batches'] = n_run

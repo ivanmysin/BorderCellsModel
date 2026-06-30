@@ -44,9 +44,9 @@ def _get_e_r(src_type: str, tgt_type: str) -> float:
 
 def _get_e_r_input(tgt_type: str) -> float:
     """Compute e_r for input→target connections (all inputs are excitatory)."""
-    post_csv = config.NEURON_TYPE_MAP[tgt_type]
-    Vr_post = get_neuron_vr(post_csv)
-    return 1.0 + 0.0 / abs(Vr_post)  # E_r = 0 for exc inputs
+    # post_csv = config.NEURON_TYPE_MAP[tgt_type]
+    # Vr_post = get_neuron_vr(post_csv)
+    return 1.0 # + 0.0 / abs(Vr_post)  # E_r = 0 for exc inputs
 
 
 def build_rec_gsyn_matrix() -> np.ndarray:
@@ -191,7 +191,7 @@ def build_inp_tau_r_matrix() -> np.ndarray:
 
 def build_inp_Uinc_matrix() -> np.ndarray:
     """Build [21,6] Uinc matrix for input connections."""
-    m = np.zeros((config.N_INPUTS, config.N_POP_UNITS), dtype=np.float64)
+    m = np.zeros((config.N_INPUTS, config.N_POP_UNITS), dtype=np.float64) + 0.5
     p = _get_syn_params('Input→Pyramidal')
     for i, inp_name in enumerate(_INPUT_NAMES):
         for j in _input_targets(inp_name):
@@ -210,8 +210,7 @@ def build_inp_e_r_matrix() -> np.ndarray:
     for j, tgt_name in enumerate(config.UNIT_NAMES):
         e_r = _get_e_r_input(_UNIT_TYPES[j])
         for i, inp_name in enumerate(_INPUT_NAMES):
-            if j in _input_targets(inp_name):
-                m[i, j] = e_r
+            m[i, j] = e_r
     return m
 
 

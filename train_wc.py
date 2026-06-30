@@ -10,6 +10,9 @@ Usage:
     python train_wc.py [--dataset data/dataset.h5] [--epochs 100] [--lr 1e-3]
 """
 import os
+
+from tensorflow import clip_by_value
+
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 import argparse
@@ -20,8 +23,9 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.keras import Model, Input
 from tensorflow.keras.layers import RNN, Layer
-from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.optimizers import Adam, AdamW
 import h5py
+import pandas as pd
 
 import config
 from utils.params import (
@@ -121,10 +125,11 @@ class WilsonCowanNetwork(Layer):
         self.post = config.N_POP_UNITS
 
         self.pconn = tf.constant(params['pconn'], dtype=tf.float32)
-        self.e_r = tf.constant(params['e_r'], dtype=tf.float32)
+        # self.e_r = tf.constant(params['e_r'], dtype=tf.float32)
 
-        ei_sign = np.ones((self.pre, self.post), dtype=np.float32)
-        ei_sign[4:6, :] = -1.0
+        # ei_sign = np.ones((self.pre, self.post), dtype=np.float32)
+        # ei_sign[4:6, :] = -1.0
+        ei_sign = np.sign(params['e_r'])
         self.ei_sign = tf.constant(ei_sign, dtype=tf.float32)
 
 
@@ -286,13 +291,19 @@ def gather_params(n_pre=None):
     n_post = config.N_POP_UNITS
 
     if n_pre == config.N_POP_UNITS + config.N_INPUTS:
+
         gsyn = np.vstack([build_rec_gsyn_matrix(), build_inp_gsyn_matrix()])
         tau_d = np.vstack([build_rec_tau_d_matrix(), build_inp_tau_d_matrix()])
         tau_r = np.vstack([build_rec_tau_r_matrix(), build_inp_tau_r_matrix()])
         tau_f = np.vstack([build_rec_tau_f_matrix(), build_inp_tau_f_matrix()])
         Uinc = np.vstack([build_rec_Uinc_matrix(), build_inp_Uinc_matrix()])
         pconn = np.vstack([build_rec_pconn_matrix(), build_inp_pconn_matrix()])
-        e_r = np.vstack([build_rec_e_r_matrix(), build_inp_e_r_matrix()])
+
+
+        rec_rec = build_rec_e_r_matrix()
+        inp_e_r = build_inp_e_r_matrix()
+        e_r = np.vstack([rec_rec, inp_e_r])
+
     else:
         gsyn = build_rec_gsyn_matrix().astype(np.float32)
         tau_d = build_rec_tau_d_matrix().astype(np.float32)
@@ -355,9 +366,28 @@ def build_model(lr=1e-3, batch_size=1, n_layers=2):
     inputs = Input(shape=(None, config.N_INPUTS), batch_size=batch_size)
 
     params1 = gather_params(n_pre=config.N_POP_UNITS + config.N_INPUTS)
-    params1['gsyn_max'] *= 5
+
+
+
+
     cell1 = WilsonCowanNetwork(params1, dt_dim=config.DT, batch_size=batch_size,
                                name='wc_layer1')
+    # # 📊 Сохранение параметров в Excel
+    # print("💾 Saving Wilson-Cowan parameters to Excel...")
+    # with pd.ExcelWriter("wc_layer1_params.xlsx", engine="openpyxl") as writer:
+    #     for name, value in params1.items():
+    #         # name = v.name.split(':')[0]  # remove ':0' suffix
+    #         # value = v.numpy()
+    #         # Handle 0D scalars
+    #         if value.ndim == 0:
+    #             df = pd.DataFrame([[value.item()]], columns=[name])
+    #         else:
+    #             df = pd.DataFrame(value)
+    #         df.to_excel(writer, sheet_name=name[:31], index=False)  # Excel limit: 31 chars
+    # print("✅ Saved to wc_layer1_params.xlsx")
+    #
+    # assert(False)
+
     x = RNN(cell1, return_sequences=True, stateful=False, name='wc_rnn1')(inputs)
 
     if n_layers >= 2:
@@ -373,10 +403,10 @@ def build_model(lr=1e-3, batch_size=1, n_layers=2):
         L_wta = config.WTA_WEIGHT * decorrelation_penalty(y_pred)
         L_sharp = config.LOSS_WEIGHT_SHARPENING * sharpening_loss(y_pred)
         L_ei = config.LOSS_WEIGHT_EI_BALANCE * ei_balance_loss(y_pred)
-        return L_mse + L_wta + L_sharp + L_ei
+        return L_mse  + L_wta + L_sharp + L_ei
 
     model.compile(
-        optimizer=Adam(learning_rate=lr, clipnorm=1.0),
+        optimizer=AdamW(learning_rate=lr, clipvalue=5.0),   # clipnorm=1.0
         loss=loss_with_reg,
     )
     return model
@@ -471,8 +501,8 @@ def main():
     parser.add_argument('--seed', type=int, default=None)
     parser.add_argument('--resume', type=str, default=None)
     parser.add_argument('--batch_size', type=int, default=None)
-    parser.add_argument('--layers', type=int, default=2,
-                        help='Number of WC layers (default: 2)')
+    parser.add_argument('--layers', type=int, default=1,
+                        help='Number of WC layers (default: 1)')
     args = parser.parse_args()
     train(args.dataset, args.epochs, args.lr, seed=args.seed, resume=args.resume,
           n_layers=args.layers, batch_size=args.batch_size)
