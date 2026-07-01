@@ -35,6 +35,7 @@ from utils.params import (
     build_rec_gsyn_matrix, build_rec_tau_f_matrix, build_rec_tau_d_matrix,
     build_rec_tau_r_matrix, build_rec_Uinc_matrix, build_rec_pconn_matrix,
     build_rec_e_r_matrix,
+    _get_syn_params, _get_e_r, _UNIT_TYPES,
 )
 from utils.dataset import load_dataset_hdf5
 
@@ -51,6 +52,62 @@ class NaNStopping(tf.keras.callbacks.Callback):
         if loss is None or not np.isfinite(loss):
             print(f"\n  NaN at epoch {epoch}, stopping.")
             self.model.stop_training = True
+
+
+class R2Metric(tf.keras.metrics.Metric):
+    """R² (coefficient of determination) computed per-batch for border cells."""
+
+    def __init__(self, name='r2', **kwargs):
+        super().__init__(name=name, **kwargs)
+        self.ss_res = self.add_weight(name='ss_res', initializer='zeros')
+        self.ss_tot = self.add_weight(name='ss_tot', initializer='zeros')
+
+    def reset_state(self):
+        self.ss_res.assign(0.0)
+        self.ss_tot.assign(0.0)
+
+    def update_state(self, y_true, y_pred, sample_weight=None):
+        y_true_b = y_true[..., :4]
+        y_pred_b = y_pred[..., :4]
+        ss_res = tf.reduce_sum(tf.square(y_true_b - y_pred_b))
+        ss_tot = tf.reduce_sum(tf.square(y_true_b - tf.reduce_mean(y_true_b,
+                                axis=-2, keepdims=True)))
+        self.ss_res.assign_add(ss_res)
+        self.ss_tot.assign_add(ss_tot)
+
+    def result(self):
+        return 1.0 - self.ss_res / (self.ss_tot + 1e-8)
+
+
+class R2ValidationCallback(tf.keras.callbacks.Callback):
+    """Compute R² on held-out validation data after each epoch."""
+
+    def __init__(self, x_val, y_val):
+        super().__init__()
+        self.x_val = x_val
+        self.y_val = y_val
+
+    def on_epoch_end(self, epoch, logs=None):
+        y_true = tf.constant(self.y_val[..., :4], dtype=tf.float32)
+        y_pred = tf.constant(self.model(self.x_val, training=False)[..., :4],
+                             dtype=tf.float32)
+
+        ss_res = tf.reduce_sum(tf.square(y_true - y_pred))
+        ss_tot = tf.reduce_sum(tf.square(y_true - tf.reduce_mean(y_true, axis=-2,
+                              keepdims=True)))
+        r2 = 1.0 - ss_res / (ss_tot + 1e-8)
+
+        per_cell = []
+        for c in range(4):
+            yt, yp = y_true[..., c], y_pred[..., c]
+            s_res = tf.reduce_sum(tf.square(yt - yp))
+            s_tot = tf.reduce_sum(tf.square(yt - tf.reduce_mean(yt, axis=-1,
+                                  keepdims=True)))
+            per_cell.append(float(1.0 - s_res / (s_tot + 1e-8)))
+
+        names = ['B_N', 'B_S', 'B_E', 'B_W']
+        cell_str = '  '.join(f'{n}={r2c:.4f}' for n, r2c in zip(names, per_cell))
+        print(f"  [val] R²={float(r2):.4f}  ({cell_str})")
 
 
 class CheckpointCallback(tf.keras.callbacks.Callback):
@@ -252,8 +309,8 @@ class WilsonCowanNetwork(Layer):
         Uinc = self._get_Uinc()
 
 
-        FRpre_unit = E * self.dt_dim * 0.001 #  tf.clip_by_value(, 0.0, 0.5)
-        FRpre_ext =  ext * self.dt_dim * 0.001 #tf.clip_by_value(ext * 0.1, 0.0, 0.5)
+        FRpre_unit = E * self.dt_dim
+        FRpre_ext = ext * self.dt_dim
         if self.pre == self.units:
             FRpre = FRpre_ext
         else:
@@ -303,6 +360,42 @@ def gather_params(n_pre=None):
         rec_rec = build_rec_e_r_matrix()
         inp_e_r = build_inp_e_r_matrix()
         e_r = np.vstack([rec_rec, inp_e_r])
+
+    elif n_pre == config.N_POP_UNITS + config.N_POP_UNITS:
+        # Second layer: 6 recurrent + 6 feedforward = 12→6
+        rec_gsyn = build_rec_gsyn_matrix()
+        rec_tau_d = build_rec_tau_d_matrix()
+        rec_tau_r = build_rec_tau_r_matrix()
+        rec_tau_f = build_rec_tau_f_matrix()
+        rec_Uinc = build_rec_Uinc_matrix()
+        rec_pconn = build_rec_pconn_matrix()
+        rec_e_r = build_rec_e_r_matrix()
+
+        p_ff = _get_syn_params('Input→Pyramidal')
+        g_base = p_ff['gsyn_max'] * config.GSYN_SCALE_DIMENSIONAL
+
+        ff_gsyn = np.full((n_post, n_post), g_base, dtype=np.float64)
+        ff_gsyn *= (1.0 + np.random.uniform(-0.3, 0.3, size=ff_gsyn.shape))
+        ff_gsyn = np.maximum(0.001, ff_gsyn)
+
+        ff_tau_d = np.full((n_post, n_post), p_ff['tau_d'], dtype=np.float64)
+        ff_tau_r = np.full((n_post, n_post), p_ff['tau_r'], dtype=np.float64)
+        ff_tau_f = np.full((n_post, n_post), p_ff['tau_f'], dtype=np.float64)
+        ff_Uinc = np.full((n_post, n_post), p_ff['Uinc'], dtype=np.float64)
+        ff_pconn = np.ones((n_post, n_post), dtype=np.float64)
+
+        ff_e_r = np.zeros((n_post, n_post), dtype=np.float64)
+        for i in range(n_post):
+            for j in range(n_post):
+                ff_e_r[i, j] = _get_e_r(_UNIT_TYPES[i], _UNIT_TYPES[j])
+
+        gsyn = np.vstack([rec_gsyn, ff_gsyn])
+        tau_d = np.vstack([rec_tau_d, ff_tau_d])
+        tau_r = np.vstack([rec_tau_r, ff_tau_r])
+        tau_f = np.vstack([rec_tau_f, ff_tau_f])
+        Uinc = np.vstack([rec_Uinc, ff_Uinc])
+        pconn = np.vstack([rec_pconn, ff_pconn])
+        e_r = np.vstack([rec_e_r, ff_e_r])
 
     else:
         gsyn = build_rec_gsyn_matrix().astype(np.float32)
@@ -391,9 +484,27 @@ def build_model(lr=1e-3, batch_size=1, n_layers=2):
     x = RNN(cell1, return_sequences=True, stateful=False, name='wc_rnn1')(inputs)
 
     if n_layers >= 2:
-        params2 = gather_params(n_pre=config.N_POP_UNITS)
+        n_pre2 = config.N_POP_UNITS + config.N_POP_UNITS
+        params2 = gather_params(n_pre=n_pre2)
+
+        # # 📊 Сохранение параметров в Excel
+        # print("💾 Saving Wilson-Cowan parameters to Excel...")
+        # with pd.ExcelWriter("wc_layer2_params.xlsx", engine="openpyxl") as writer:
+        #     for name, value in params2.items():
+        #         # name = v.name.split(':')[0]  # remove ':0' suffix
+        #         # value = v.numpy()
+        #         # Handle 0D scalars
+        #         if value.ndim == 0:
+        #             df = pd.DataFrame([[value.item()], columns=[name])
+        #         else:
+        #             df = pd.DataFrame(value)
+        #         df.to_excel(writer, sheet_name=name[:31], index=False)  # Excel limit: 31 chars
+        # print("✅ Saved to wc_layer2_params.xlsx")
+        #
+        # assert(False)
+
         cell2 = WilsonCowanNetwork(params2, dt_dim=config.DT, batch_size=batch_size,
-                                   n_pre=config.N_POP_UNITS, name='wc_layer2')
+                                   n_pre=n_pre2, name='wc_layer2')
         x = RNN(cell2, return_sequences=True, stateful=False, name='wc_rnn2')(x)
 
     model = Model(inputs, x)
@@ -406,8 +517,9 @@ def build_model(lr=1e-3, batch_size=1, n_layers=2):
         return L_mse  + L_wta + L_sharp + L_ei
 
     model.compile(
-        optimizer=AdamW(learning_rate=lr, clipvalue=5.0),   # clipnorm=1.0
+        optimizer=AdamW(learning_rate=lr, clipvalue=5.0),
         loss=loss_with_reg,
+        metrics=[R2Metric()],
     )
     return model
 
@@ -448,7 +560,8 @@ def load_all_batches(dataset_path):
 
 
 def train(dataset_path=None, n_epochs=None, learning_rate=None,
-          batches_per_epoch=None, seed=None, resume=None, n_layers=1, batch_size=None):
+          batches_per_epoch=None, seed=None, resume=None, n_layers=1, batch_size=None,
+          val_split=0.1):
     ds_path = dataset_path or os.path.join(
         os.path.dirname(config.TRAJECTORY_HDF5), 'dataset.h5')
     n_epochs = n_epochs or config.N_EPOCHS
@@ -467,6 +580,16 @@ def train(dataset_path=None, n_epochs=None, learning_rate=None,
     print(f"Loading dataset from {ds_path}...")
     X, Y = load_all_batches(ds_path)
 
+    if X.shape[0] > 10:
+        n_val = max(1, int(len(X) * val_split))
+        X_val, Y_val = X[-n_val:], Y[-n_val:]
+        X_train, Y_train = X[:-n_val], Y[:-n_val]
+    else:
+        X_val, Y_val = X, Y
+        X_train, Y_train = X, Y
+
+    print(f"  Train: {X_train.shape[0]} batches, Val: {X_val.shape[0]} batches")
+
     print(f"Building Wilson-Cowan model ({n_layers} layers)...")
     model = build_model(lr=lr, batch_size=batch_size, n_layers=n_layers)
     n_vars = sum(int(np.prod(v.shape)) for v in model.trainable_variables)
@@ -478,11 +601,11 @@ def train(dataset_path=None, n_epochs=None, learning_rate=None,
         print(f"Resuming from {resume}...")
         model.load_weights(resume)
 
-    callbacks = [NaNStopping(), CheckpointCallback()]
+    callbacks = [NaNStopping(), CheckpointCallback()] #, R2ValidationCallback(X_val, Y_val)]
 
     t_start = time.time()
     history = model.fit(
-        X, Y,
+        X_train, Y_train,
         epochs=n_epochs,
         batch_size=batch_size,
         verbose=2,
@@ -490,6 +613,15 @@ def train(dataset_path=None, n_epochs=None, learning_rate=None,
     )
     total_dt = time.time() - t_start
     print(f"Training done in {total_dt/60:.1f} min.")
+
+    y_true = tf.constant(Y_val[..., :4], dtype=tf.float32)
+    y_pred = tf.constant(model(X_val, training=False)[..., :4], dtype=tf.float32)
+    ss_res = tf.reduce_sum(tf.square(y_true - y_pred))
+    ss_tot = tf.reduce_sum(tf.square(y_true - tf.reduce_mean(y_true, axis=-2,
+                          keepdims=True)))
+    final_r2 = float(1.0 - ss_res / (ss_tot + 1e-8))
+    print(f"Final validation R² = {final_r2:.4f}")
+
     return history.history['loss']
 
 
@@ -503,9 +635,11 @@ def main():
     parser.add_argument('--batch_size', type=int, default=None)
     parser.add_argument('--layers', type=int, default=1,
                         help='Number of WC layers (default: 1)')
+    parser.add_argument('--val_split', type=float, default=0.1,
+                        help='Fraction of data for validation (default: 0.1)')
     args = parser.parse_args()
     train(args.dataset, args.epochs, args.lr, seed=args.seed, resume=args.resume,
-          n_layers=args.layers, batch_size=args.batch_size)
+          n_layers=args.layers, batch_size=args.batch_size, val_split=args.val_split)
 
 
 if __name__ == '__main__':
