@@ -218,7 +218,7 @@ class WilsonCowanNetwork(Layer):
         )
 
         # gsyn_max: g = softplus(θ), always > 0
-        theta_gsyn = _inv_softplus_np(params['gsyn_max'])
+        theta_gsyn = _inv_softplus_np(params['gsyn_max'] * config.SYN_GSYN_INIT_SCALE)
         self._theta_gsyn = self.add_weight(
             shape=(self.pre, self.post),
             initializer=tf.constant_initializer(theta_gsyn),

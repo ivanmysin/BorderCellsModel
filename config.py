@@ -217,10 +217,18 @@ E_REV_INH = -75.0
 # LOSS_WARMUP_STEPS so it does not contaminate the loss.
 SYN_INIT_R_LO = 0.9
 SYN_INIT_R_HI = 1.0
-SYN_INIT_U_LO = 0.0
-SYN_INIT_U_HI = 0.1
+SYN_INIT_U_LO = 0.9
+SYN_INIT_U_HI = 1.0
 SYN_INIT_A_LO = 0.0
 SYN_INIT_A_HI = 0.1
+
+# Scales initial gsyn_max so I_syn starts in the active region of
+# S(I_syn) even with FRpre = E * dt_dim * 0.001. Without this, the
+# softplus-based dead-zone penalty has too weak a gradient to escape
+# the dead zone in reasonable training time.
+#   target I_syn ≈ 5  →  gsyn_max_init ≈ 5 / (A * 0.005 * sign_ei)
+#   for A ≈ 1, sign_ei = +1: gsyn_max_init ≈ 1000
+SYN_GSYN_INIT_SCALE = 1000.0
 
 # Number of initial steps to exclude from loss and metrics. At
 # DT=0.1 ms, 500 steps = 50 ms — enough for both the synaptic
@@ -242,7 +250,7 @@ LOSS_WARMUP_STEPS = 500
 #   - threshold = 2.0 marks the boundary of usable S'(I_syn)
 SYN_DEAD_ZONE_THRESHOLD = 2.0   # I_syn <= this is "dead"
 SYN_DEAD_ZONE_TAU = 1.0          # softness (smaller = sharper transition)
-SYN_DEAD_ZONE_WEIGHT = 0.001     # weight in total loss (start small)
+SYN_DEAD_ZONE_WEIGHT = 0.0001    # safety net only — gsyn_init is already in active region
 
 # ============================================================
 # Trainable flags
