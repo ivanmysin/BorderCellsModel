@@ -474,8 +474,8 @@ def ei_balance_loss(y_pred):
     inhib = y_pred[..., 4:6]                           # Basket, Axo
     exc_mean = tf.reduce_mean(exc, axis=[-1, -2])
     inhib_mean = tf.reduce_mean(inhib, axis=[-1, -2])
-    target_ratio = 0.15
-    actual_ratio = inhib_mean / (exc_mean + 1e-6)
+    target_ratio = 0.6
+    actual_ratio = exc_mean / (exc_mean + inhib_mean  + 1e-6)
     return tf.reduce_mean((actual_ratio - target_ratio) ** 2)
 
 
