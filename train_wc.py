@@ -472,9 +472,9 @@ def ei_balance_loss(y_pred):
     """
     exc = y_pred[..., :4]                              # border cells
     inhib = y_pred[..., 4:6]                           # Basket, Axo
-    exc_mean = tf.reduce_mean(tf.abs(exc), axis=[-1, -2])
-    inhib_mean = tf.reduce_mean(tf.abs(inhib), axis=[-1, -2])
-    target_ratio = 0.3
+    exc_mean = tf.reduce_mean(exc, axis=[-1, -2])
+    inhib_mean = tf.reduce_mean(inhib, axis=[-1, -2])
+    target_ratio = 0.15
     actual_ratio = inhib_mean / (exc_mean + 1e-6)
     return tf.reduce_mean((actual_ratio - target_ratio) ** 2)
 
@@ -562,8 +562,8 @@ def build_model(lr=1e-3, batch_size=1, n_layers=2):
         L_wta = config.WTA_WEIGHT * decorrelation_penalty(E_pred)
         L_sharp = config.LOSS_WEIGHT_SHARPENING * sharpening_loss(E_pred)
         L_ei = config.LOSS_WEIGHT_EI_BALANCE * ei_balance_loss(E_pred)
-        L_dead_zone = synapse_dead_zone_penalty(I_syn_pred)
-        return L_mse  + L_wta + L_sharp + L_ei + L_dead_zone
+        # L_dead_zone = synapse_dead_zone_penalty(I_syn_pred)
+        return L_mse  + L_wta + L_sharp + L_ei # + L_dead_zone
 
     model.compile(
         optimizer=Adam(learning_rate=lr, clipvalue=15.0),
