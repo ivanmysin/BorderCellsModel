@@ -554,16 +554,12 @@ def build_model(lr=1e-3, batch_size=1, n_layers=2):
         y_true_w = y_true[..., warmup:, :]
         y_pred_w = y_pred[..., warmup:, :]
 
-        # Output layout: [E (units) | I_syn (units)]; auxiliary losses use E only.
-        E_pred = y_pred_w[..., :config.N_POP_UNITS]
-        I_syn_pred = y_pred_w[..., config.N_POP_UNITS:]
+        L_mse = tf.keras.losses.MeanSquaredError()(y_true_w, y_pred_w[..., :4])
+        # L_wta = config.WTA_WEIGHT * decorrelation_penalty(E_pred)
+        # L_sharp = config.LOSS_WEIGHT_SHARPENING * sharpening_loss(E_pred)
+        # L_ei = config.LOSS_WEIGHT_EI_BALANCE * ei_balance_loss(E_pred)
 
-        L_mse = tf.keras.losses.MeanSquaredError()(y_true_w, E_pred[..., :4])
-        L_wta = config.WTA_WEIGHT * decorrelation_penalty(E_pred)
-        L_sharp = config.LOSS_WEIGHT_SHARPENING * sharpening_loss(E_pred)
-        L_ei = config.LOSS_WEIGHT_EI_BALANCE * ei_balance_loss(E_pred)
-        # L_dead_zone = synapse_dead_zone_penalty(I_syn_pred)
-        return L_mse  + L_wta + L_sharp + L_ei # + L_dead_zone
+        return L_mse # + L_wta + L_sharp + L_ei
 
     model.compile(
         optimizer=Adam(learning_rate=lr, clipvalue=15.0),
