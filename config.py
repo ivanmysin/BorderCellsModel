@@ -228,7 +228,7 @@ SYN_INIT_A_HI = 0.1
 # the dead zone in reasonable training time.
 #   target I_syn ≈ 5  →  gsyn_max_init ≈ 5 / (A * 0.005 * sign_ei)
 #   for A ≈ 1, sign_ei = +1: gsyn_max_init ≈ 1000
-SYN_GSYN_INIT_SCALE = 1000.0
+SYN_GSYN_INIT_SCALE = 5.0
 
 # Number of initial steps to exclude from loss and metrics. At
 # DT=0.1 ms, 500 steps = 50 ms — enough for both the synaptic
