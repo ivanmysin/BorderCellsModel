@@ -229,6 +229,22 @@ SYN_INIT_A_HI = 0.1
 LOSS_WARMUP_STEPS = 500
 
 # ============================================================
+# Synaptic dead-zone penalty (escape from Naka-Rushton S'(0)=0)
+# ============================================================
+# Softplus-based penalty that pushes I_syn out of the dead zone
+# (I_syn <= threshold). Has non-zero gradient everywhere, including
+# at I_syn = 0, so it bypasses the S'(I_syn)=0 chain.
+#   penalty = softplus(-(I_syn - threshold) / tau)  per timestep
+#
+# Calibration (with FRpre = E * dt_dim * 0.001):
+#   - I_syn ~ 0 when gsyn is at its initial value (dead zone)
+#   - I_syn ~ 5 corresponds to E ~ 50 Hz (active range)
+#   - threshold = 2.0 marks the boundary of usable S'(I_syn)
+SYN_DEAD_ZONE_THRESHOLD = 2.0   # I_syn <= this is "dead"
+SYN_DEAD_ZONE_TAU = 1.0          # softness (smaller = sharper transition)
+SYN_DEAD_ZONE_WEIGHT = 0.001     # weight in total loss (start small)
+
+# ============================================================
 # Trainable flags
 # ============================================================
 TRAIN_SYNAPSE_GMAX = True

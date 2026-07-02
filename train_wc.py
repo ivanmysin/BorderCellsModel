@@ -68,8 +68,10 @@ class R2Metric(tf.keras.metrics.Metric):
 
     def update_state(self, y_true, y_pred, sample_weight=None):
         warmup = config.LOSS_WARMUP_STEPS
+        # y_pred layout: [E | I_syn]; use the E part for R².
+        E_pred = y_pred[..., warmup:, :config.N_POP_UNITS]
         y_true_b = y_true[..., warmup:, :4]
-        y_pred_b = y_pred[..., warmup:, :4]
+        y_pred_b = E_pred[..., :4]
         ss_res = tf.reduce_sum(tf.square(y_true_b - y_pred_b))
         ss_tot = tf.reduce_sum(tf.square(y_true_b - tf.reduce_mean(y_true_b,
                                 axis=-2, keepdims=True)))
@@ -89,9 +91,13 @@ class R2ValidationCallback(tf.keras.callbacks.Callback):
         self.y_val = y_val
 
     def on_epoch_end(self, epoch, logs=None):
-        y_true = tf.constant(self.y_val[..., :4], dtype=tf.float32)
-        y_pred = tf.constant(self.model(self.x_val, training=False)[..., :4],
-                             dtype=tf.float32)
+        warmup = config.LOSS_WARMUP_STEPS
+        y_true = tf.constant(self.y_val[..., warmup:, :4], dtype=tf.float32)
+        y_pred_full = tf.constant(
+            self.model(self.x_val, training=False)[..., warmup:, :],
+            dtype=tf.float32)
+        # Output layout: [E | I_syn]; use the E part for R².
+        y_pred = y_pred_full[..., :config.N_POP_UNITS, :4]
 
         ss_res = tf.reduce_sum(tf.square(y_true - y_pred))
         ss_tot = tf.reduce_sum(tf.square(y_true - tf.reduce_mean(y_true, axis=-2,
@@ -263,7 +269,9 @@ class WilsonCowanNetwork(Layer):
             tf.TensorShape([batch_size, self.pre, self.post]),
             tf.TensorShape([batch_size, self.pre, self.post]),
         ]
-        self.output_size = self.units
+        # Output: [E (units) | I_syn (units)] — I_syn is exposed only so that
+        # the dead-zone penalty can read it. Dynamics are unchanged.
+        self.output_size = self.units * 2
 
     # ── Transform helpers (θ → physical) ─────────────────────────────
     def _get_tau_pop(self):
@@ -355,7 +363,7 @@ class WilsonCowanNetwork(Layer):
         A_new = tf.clip_by_value(a_ + released, 0.0, 1.0)
         R_new = tf.clip_by_value(r_ - released, 0.0, 1.0)
 
-        return E_new, [E_new, R_new, U_new, A_new]
+        return tf.concat([E_new, I_syn], axis=-1), [E_new, R_new, U_new, A_new]
 
 
 def gather_params(n_pre=None):
@@ -471,6 +479,19 @@ def ei_balance_loss(y_pred):
     return tf.reduce_mean((actual_ratio - target_ratio) ** 2)
 
 
+def synapse_dead_zone_penalty(I_syn):
+    """Push I_syn out of the Naka-Rushton dead zone (I_syn ~ 0).
+
+    Softplus(-(I_syn - threshold) / tau) is large when I_syn <= threshold,
+    small otherwise. Gradient is non-zero everywhere (including at I_syn=0),
+    so it provides a path I_syn -> gsyn that bypasses S'(I_syn)=0.
+
+    Softplus derivative:  d/dx softplus(x) = sigmoid(x) > 0 for all x.
+    """
+    z = -(I_syn - config.SYN_DEAD_ZONE_THRESHOLD) / config.SYN_DEAD_ZONE_TAU
+    return config.SYN_DEAD_ZONE_WEIGHT * tf.reduce_mean(tf.nn.softplus(z))
+
+
 def build_model(lr=1e-3, batch_size=1, n_layers=2):
     inputs = Input(shape=(None, config.N_INPUTS), batch_size=batch_size)
 
@@ -511,7 +532,7 @@ def build_model(lr=1e-3, batch_size=1, n_layers=2):
         #         # value = v.numpy()
         #         # Handle 0D scalars
         #         if value.ndim == 0:
-        #             df = pd.DataFrame([[value.item()], columns=[name])
+        #             df = pd.DataFrame([[value.item()]], columns=[name])
         #         else:
         #             df = pd.DataFrame(value)
         #         df.to_excel(writer, sheet_name=name[:31], index=False)  # Excel limit: 31 chars
@@ -521,7 +542,10 @@ def build_model(lr=1e-3, batch_size=1, n_layers=2):
 
         cell2 = WilsonCowanNetwork(params2, dt_dim=config.DT, batch_size=batch_size,
                                    n_pre=n_pre2, name='wc_layer2')
-        x = RNN(cell2, return_sequences=True, stateful=False, name='wc_rnn2')(x)
+        # Layer 1 output is [E | I_syn]; pass only E to layer 2 so its
+        # recurrent/feedforward synapses receive firing rates, not currents.
+        E_from_layer1 = x[..., :config.N_POP_UNITS]
+        x = RNN(cell2, return_sequences=True, stateful=False, name='wc_rnn2')(E_from_layer1)
 
     model = Model(inputs, x)
 
@@ -529,14 +553,20 @@ def build_model(lr=1e-3, batch_size=1, n_layers=2):
         warmup = config.LOSS_WARMUP_STEPS
         y_true_w = y_true[..., warmup:, :]
         y_pred_w = y_pred[..., warmup:, :]
-        L_mse = tf.keras.losses.MeanSquaredError()(y_true_w, y_pred_w[..., :4])
-        L_wta = config.WTA_WEIGHT * decorrelation_penalty(y_pred_w)
-        L_sharp = config.LOSS_WEIGHT_SHARPENING * sharpening_loss(y_pred_w)
-        L_ei = config.LOSS_WEIGHT_EI_BALANCE * ei_balance_loss(y_pred_w)
-        return L_mse  + L_wta + L_sharp + L_ei
+
+        # Output layout: [E (units) | I_syn (units)]; auxiliary losses use E only.
+        E_pred = y_pred_w[..., :config.N_POP_UNITS]
+        I_syn_pred = y_pred_w[..., config.N_POP_UNITS:]
+
+        L_mse = tf.keras.losses.MeanSquaredError()(y_true_w, E_pred[..., :4])
+        L_wta = config.WTA_WEIGHT * decorrelation_penalty(E_pred)
+        L_sharp = config.LOSS_WEIGHT_SHARPENING * sharpening_loss(E_pred)
+        L_ei = config.LOSS_WEIGHT_EI_BALANCE * ei_balance_loss(E_pred)
+        L_dead_zone = synapse_dead_zone_penalty(I_syn_pred)
+        return L_mse  + L_wta + L_sharp + L_ei + L_dead_zone
 
     model.compile(
-        optimizer=AdamW(learning_rate=lr, clipvalue=5.0),
+        optimizer=Adam(learning_rate=lr, clipvalue=15.0),
         loss=loss_with_reg,
         metrics=[R2Metric()],
     )
@@ -635,8 +665,10 @@ def train(dataset_path=None, n_epochs=None, learning_rate=None,
 
     warmup = config.LOSS_WARMUP_STEPS
     y_true = tf.constant(Y_val[..., warmup:, :4], dtype=tf.float32)
-    y_pred = tf.constant(model(X_val, training=False)[..., warmup:, :4],
-                         dtype=tf.float32)
+    y_pred_full = tf.constant(model(X_val, training=False)[..., warmup:, :],
+                              dtype=tf.float32)
+    # Output layout: [E | I_syn]; use the E part for R².
+    y_pred = y_pred_full[..., :config.N_POP_UNITS, :4]
     ss_res = tf.reduce_sum(tf.square(y_true - y_pred))
     ss_tot = tf.reduce_sum(tf.square(y_true - tf.reduce_mean(y_true, axis=-2,
                           keepdims=True)))
