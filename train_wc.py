@@ -67,8 +67,9 @@ class R2Metric(tf.keras.metrics.Metric):
         self.ss_tot.assign(0.0)
 
     def update_state(self, y_true, y_pred, sample_weight=None):
-        y_true_b = y_true[..., :4]
-        y_pred_b = y_pred[..., :4]
+        warmup = config.LOSS_WARMUP_STEPS
+        y_true_b = y_true[..., warmup:, :4]
+        y_pred_b = y_pred[..., warmup:, :4]
         ss_res = tf.reduce_sum(tf.square(y_true_b - y_pred_b))
         ss_tot = tf.reduce_sum(tf.square(y_true_b - tf.reduce_mean(y_true_b,
                                 axis=-2, keepdims=True)))
@@ -286,9 +287,24 @@ class WilsonCowanNetwork(Layer):
     def get_initial_state(self, batch_size=1):
         return [
             tf.zeros([batch_size, self.units], dtype=tf.float32),
-            tf.ones([batch_size, self.pre, self.post], dtype=tf.float32),
-            tf.zeros([batch_size, self.pre, self.post], dtype=tf.float32),
-            tf.zeros([batch_size, self.pre, self.post], dtype=tf.float32),
+            tf.random.uniform(
+                [batch_size, self.pre, self.post],
+                minval=config.SYN_INIT_R_LO,
+                maxval=config.SYN_INIT_R_HI,
+                dtype=tf.float32,
+            ),
+            tf.random.uniform(
+                [batch_size, self.pre, self.post],
+                minval=config.SYN_INIT_U_LO,
+                maxval=config.SYN_INIT_U_HI,
+                dtype=tf.float32,
+            ),
+            tf.random.uniform(
+                [batch_size, self.pre, self.post],
+                minval=config.SYN_INIT_A_LO,
+                maxval=config.SYN_INIT_A_HI,
+                dtype=tf.float32,
+            ),
         ]
 
     def _naka_rushton(self, x):
@@ -309,8 +325,8 @@ class WilsonCowanNetwork(Layer):
         Uinc = self._get_Uinc()
 
 
-        FRpre_unit = E * self.dt_dim
-        FRpre_ext = ext * self.dt_dim
+        FRpre_unit = E * self.dt_dim * 0.001
+        FRpre_ext = ext * self.dt_dim * 0.001
         if self.pre == self.units:
             FRpre = FRpre_ext
         else:
@@ -510,10 +526,13 @@ def build_model(lr=1e-3, batch_size=1, n_layers=2):
     model = Model(inputs, x)
 
     def loss_with_reg(y_true, y_pred):
-        L_mse = tf.keras.losses.MeanSquaredError()(y_true, y_pred[..., :4])
-        L_wta = config.WTA_WEIGHT * decorrelation_penalty(y_pred)
-        L_sharp = config.LOSS_WEIGHT_SHARPENING * sharpening_loss(y_pred)
-        L_ei = config.LOSS_WEIGHT_EI_BALANCE * ei_balance_loss(y_pred)
+        warmup = config.LOSS_WARMUP_STEPS
+        y_true_w = y_true[..., warmup:, :]
+        y_pred_w = y_pred[..., warmup:, :]
+        L_mse = tf.keras.losses.MeanSquaredError()(y_true_w, y_pred_w[..., :4])
+        L_wta = config.WTA_WEIGHT * decorrelation_penalty(y_pred_w)
+        L_sharp = config.LOSS_WEIGHT_SHARPENING * sharpening_loss(y_pred_w)
+        L_ei = config.LOSS_WEIGHT_EI_BALANCE * ei_balance_loss(y_pred_w)
         return L_mse  + L_wta + L_sharp + L_ei
 
     model.compile(
@@ -614,8 +633,10 @@ def train(dataset_path=None, n_epochs=None, learning_rate=None,
     total_dt = time.time() - t_start
     print(f"Training done in {total_dt/60:.1f} min.")
 
-    y_true = tf.constant(Y_val[..., :4], dtype=tf.float32)
-    y_pred = tf.constant(model(X_val, training=False)[..., :4], dtype=tf.float32)
+    warmup = config.LOSS_WARMUP_STEPS
+    y_true = tf.constant(Y_val[..., warmup:, :4], dtype=tf.float32)
+    y_pred = tf.constant(model(X_val, training=False)[..., warmup:, :4],
+                         dtype=tf.float32)
     ss_res = tf.reduce_sum(tf.square(y_true - y_pred))
     ss_tot = tf.reduce_sum(tf.square(y_true - tf.reduce_mean(y_true, axis=-2,
                           keepdims=True)))

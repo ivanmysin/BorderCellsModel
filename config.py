@@ -209,6 +209,26 @@ E_REV_EXC = 0.0
 E_REV_INH = -75.0
 
 # ============================================================
+# Synaptic initial state randomization & loss warmup
+# ============================================================
+# Initial values for R, U, A are drawn from Uniform(LO, HI) at the
+# start of each batch. Adds variability across batches and helps
+# break symmetry in learning. The resulting transient is masked by
+# LOSS_WARMUP_STEPS so it does not contaminate the loss.
+SYN_INIT_R_LO = 0.9
+SYN_INIT_R_HI = 1.0
+SYN_INIT_U_LO = 0.0
+SYN_INIT_U_HI = 0.1
+SYN_INIT_A_LO = 0.0
+SYN_INIT_A_HI = 0.1
+
+# Number of initial steps to exclude from loss and metrics. At
+# DT=0.1 ms, 500 steps = 50 ms — enough for both the synaptic
+# transient (~10 steps) and the Wilson-Cowan transient (tau≈12 ms
+# → ~120 steps) to settle.
+LOSS_WARMUP_STEPS = 500
+
+# ============================================================
 # Trainable flags
 # ============================================================
 TRAIN_SYNAPSE_GMAX = True
