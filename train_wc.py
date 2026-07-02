@@ -363,7 +363,7 @@ class WilsonCowanNetwork(Layer):
         A_new = tf.clip_by_value(a_ + released, 0.0, 1.0)
         R_new = tf.clip_by_value(r_ - released, 0.0, 1.0)
 
-        return tf.concat([E_new, I_syn], axis=-1), [E_new, R_new, U_new, A_new]
+        return E_new, [E_new, R_new, U_new, A_new]
 
 
 def gather_params(n_pre=None):
