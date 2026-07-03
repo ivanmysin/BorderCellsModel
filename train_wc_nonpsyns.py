@@ -1,0 +1,460 @@
+"""Train border cell network with Wilson-Cowan population model.
+
+Replaces Izhikevich mean-field with Wilson-Cowan rate dynamics:
+    τ_i * dE_i/dt = -E_i + S(I_total_i)
+    S(x) = M * max(x,0)² / (σ² + max(x,0)²)
+
+TM synapses kept identical to train_simple.py.
+
+Usage:
+    python train_wc.py [--dataset data/dataset.h5] [--epochs 100] [--lr 1e-3]
+"""
+import os
+
+from tensorflow import clip_by_value
+
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+
+import argparse
+import json
+import time
+
+import numpy as np
+import tensorflow as tf
+from tensorflow.keras import Model, Input
+from tensorflow.keras.layers import RNN, Layer
+from tensorflow.keras.optimizers import Adam, AdamW
+import h5py
+import pandas as pd
+
+import config
+from utils.dataset import load_dataset_hdf5
+
+from tensorflow.keras.constraints import Constraint, NonNeg
+
+class MinMaxWeights(Constraint):
+
+    def __init__(self, min_val=0, max_val=10000):
+        self.min = tf.convert_to_tensor(min_val) if not isinstance(min_val, tf.Tensor) else min_val
+        self.max = tf.convert_to_tensor(max_val) if not isinstance(max_val, tf.Tensor) else max_val
+
+
+    def __call__(self, w):
+        return tf.clip_by_value(w, clip_value_min=self.min, clip_value_max=self.max)
+
+    def get_config(self):
+        config = {
+            "min": self.min.numpy().tolist() if hasattr(self.min, "numpy") else self.min.tolist(),
+            "max": self.max.numpy().tolist() if hasattr(self.max, "numpy") else self.max.tolist(),
+        }
+
+        return config
+
+    @classmethod
+    def from_config(cls, config):
+        return cls(**config)
+
+
+class NaNStopping(tf.keras.callbacks.Callback):
+    def on_batch_end(self, batch, logs=None):
+        loss = logs.get('loss')
+        if loss is None or not np.isfinite(loss):
+            print(f"\n  NaN at batch {batch}, stopping.")
+            self.model.stop_training = True
+
+    def on_epoch_end(self, epoch, logs=None):
+        loss = logs.get('loss')
+        if loss is None or not np.isfinite(loss):
+            print(f"\n  NaN at epoch {epoch}, stopping.")
+            self.model.stop_training = True
+
+
+class R2Metric(tf.keras.metrics.Metric):
+    """R² (coefficient of determination) computed per-batch for border cells."""
+
+    def __init__(self, name='r2', **kwargs):
+        super().__init__(name=name, **kwargs)
+        self.ss_res = self.add_weight(name='ss_res', initializer='zeros')
+        self.ss_tot = self.add_weight(name='ss_tot', initializer='zeros')
+
+    def reset_state(self):
+        self.ss_res.assign(0.0)
+        self.ss_tot.assign(0.0)
+
+    def update_state(self, y_true, y_pred, sample_weight=None):
+        warmup = config.LOSS_WARMUP_STEPS
+        # y_pred layout: [E | I_syn]; use the E part for R².
+        E_pred = y_pred[..., warmup:, :config.N_POP_UNITS]
+        y_true_b = y_true[..., warmup:, :4]
+        y_pred_b = E_pred[..., :4]
+        ss_res = tf.reduce_sum(tf.square(y_true_b - y_pred_b))
+        ss_tot = tf.reduce_sum(tf.square(y_true_b - tf.reduce_mean(y_true_b,
+                                                                   axis=-2, keepdims=True)))
+        self.ss_res.assign_add(ss_res)
+        self.ss_tot.assign_add(ss_tot)
+
+    def result(self):
+        return 1.0 - self.ss_res / (self.ss_tot + 1e-8)
+
+
+class R2ValidationCallback(tf.keras.callbacks.Callback):
+    """Compute R² on held-out validation data after each epoch."""
+
+    def __init__(self, x_val, y_val):
+        super().__init__()
+        self.x_val = x_val
+        self.y_val = y_val
+
+    def on_epoch_end(self, epoch, logs=None):
+        warmup = config.LOSS_WARMUP_STEPS
+        y_true = tf.constant(self.y_val[..., warmup:, :4], dtype=tf.float32)
+        y_pred_full = tf.constant(
+            self.model(self.x_val, training=False)[..., warmup:, :],
+            dtype=tf.float32)
+        # Output layout: [E | I_syn]; use the E part for R².
+        y_pred = y_pred_full[..., :config.N_POP_UNITS, :4]
+
+        ss_res = tf.reduce_sum(tf.square(y_true - y_pred))
+        ss_tot = tf.reduce_sum(tf.square(y_true - tf.reduce_mean(y_true, axis=-2,
+                                                                 keepdims=True)))
+        r2 = 1.0 - ss_res / (ss_tot + 1e-8)
+
+        per_cell = []
+        for c in range(4):
+            yt, yp = y_true[..., c], y_pred[..., c]
+            s_res = tf.reduce_sum(tf.square(yt - yp))
+            s_tot = tf.reduce_sum(tf.square(yt - tf.reduce_mean(yt, axis=-1,
+                                                                keepdims=True)))
+            per_cell.append(float(1.0 - s_res / (s_tot + 1e-8)))
+
+        names = ['B_N', 'B_S', 'B_E', 'B_W']
+        cell_str = '  '.join(f'{n}={r2c:.4f}' for n, r2c in zip(names, per_cell))
+        print(f"  [val] R²={float(r2):.4f}  ({cell_str})")
+
+
+class CheckpointCallback(tf.keras.callbacks.Callback):
+    def __init__(self, checkpoint_dir=None):
+        super().__init__()
+        self.checkpoint_dir = checkpoint_dir or os.path.join(
+            config.RESULTS_DIR, 'checkpoints_wc')
+        self.loss_history = []
+
+    def on_epoch_end(self, epoch, logs=None):
+        logs = logs or {}
+        loss = float(logs.get('loss', float('nan')))
+        self.loss_history.append(loss)
+        os.makedirs(self.checkpoint_dir, exist_ok=True)
+        tag = f"epoch_{epoch + 1:04d}_loss_{loss:.6f}"
+        self.model.save_weights(
+            os.path.join(self.checkpoint_dir, f"{tag}.weights.h5"))
+        with open(os.path.join(self.checkpoint_dir, f"{tag}_meta.json"), 'w') as f:
+            json.dump({'epoch': epoch + 1, 'loss': loss}, f, indent=2)
+        if (epoch + 1) % max(1, self.params.get('epochs', 100) // 20) == 0 or epoch == 0:
+            print(f"  [ckpt] epoch {epoch+1}: loss={loss:.6f}")
+
+    def on_train_end(self, logs=None):
+        self.model.save_weights(
+            os.path.join(self.checkpoint_dir, 'latest.weights.h5'))
+        with open(os.path.join(self.checkpoint_dir, 'loss_history.json'), 'w') as f:
+            json.dump(self.loss_history, f, indent=2)
+
+
+class WilsonCowanNetwork(Layer):
+    """Wilson-Cowan rate model + Tsodyks-Markram synapses.
+
+    State: E [batch, units] + R, U, A [batch, pre, post]
+    Dynamics: τ_i * dE_i/dt = -E_i + S(Σ gsyn*A*FRpre + I_ext)
+    S(x) = M * max(x,0)² / (σ² + max(x,0)²)
+    """
+
+    WC_M = 100.0
+    WC_SIGMA = 5.0
+
+    # Bounds for Uinc sigmoid mapping
+    UINC_LO = 0.04
+    UINC_HI = 0.7
+
+    def __init__(self, params, dt=0.1, batch_size=1, n_pre=None, **kwargs):
+        super().__init__(**kwargs)
+        self.dt = float(dt)
+        self.units = config.N_POP_UNITS
+        self.pre = n_pre if n_pre is not None else (config.N_POP_UNITS + config.N_INPUTS)
+        self.post = config.N_POP_UNITS
+
+        self.pconn = tf.constant(params['pconn'], dtype=tf.float32)
+        # self.e_r = tf.constant(params['e_r'], dtype=tf.float32)
+
+        # ei_sign = np.ones((self.pre, self.post), dtype=np.float32)
+        # ei_sign[4:6, :] = -1.0
+        ei_sign = np.sign(params['e_r'])
+        self.ei_sign = tf.constant(ei_sign, dtype=tf.float32)
+
+
+        wc_tau = np.array([12.0, 12.0, 12.0, 12.0, 10.0, 10.0], dtype=np.float32)
+        wc_i_ext = np.ones( self.units, dtype=np.float32 ) + 5.0
+
+
+        self.tau_pop = self.add_weight(
+            shape=(self.units,),
+            initializer=tf.constant_initializer(wc_tau),
+            trainable=False,
+            name='tau_pop',
+        )
+
+        self.I_ext = self.add_weight(
+            shape=(self.units,),
+            initializer=tf.constant_initializer(wc_i_ext),
+            trainable=config.TRAIN_POP_IEXT,
+            name='I_ext',
+        )
+
+        self.gsyn_max = self.add_weight(
+            shape=(self.pre, self.post),
+            initializer=tf.constant_initializer(params['gsyn_max']),
+            trainable=config.TRAIN_SYNAPSE_GMAX,
+            name='gsyn_max',
+            constraint=NonNeg(),
+        )
+
+
+        self.tau_1 = self.add_weight(
+            shape=(self.pre, self.post),
+            initializer=tf.constant_initializer(params['tau_1']),
+            trainable=config.TRAIN_SYNAPSE_TAU_f,
+            name='tau_1',
+            constraint=MinMaxWeights(min_val=2.0, max_val=10.0)
+        )
+
+        self.tau_2 = self.add_weight(
+            shape=(self.pre, self.post),
+            initializer=tf.constant_initializer(params['tau_2']),
+            trainable=config.TRAIN_SYNAPSE_TAU_d,
+            name='tau_2',
+            constraint=MinMaxWeights(min_val=3.0, max_val=50.0),
+        )
+
+        self.state_size = [
+            tf.TensorShape([batch_size, self.units]),
+            tf.TensorShape([batch_size, self.pre, self.post]),
+            tf.TensorShape([batch_size, self.pre, self.post]),
+        ]
+
+        self.output_size = self.units
+
+    def get_initial_state(self, batch_size=1):
+
+        nu = tf.zeros([batch_size, self.units], dtype=tf.float32)
+        g = tf.zeros([batch_size, self.pre, self.post], dtype=tf.float32)
+        dg = tf.zeros([batch_size, self.pre, self.post], dtype=tf.float32)
+
+        init_state = [nu, g, dg]
+
+        return init_state
+
+    def _naka_rushton(self, x):
+        """S(x) = M * max(x,0)² / (σ² + max(x,0)²)"""
+        x_pos = tf.maximum(x, 0.0)
+        return self.WC_M * x_pos ** 2 / (self.WC_SIGMA ** 2 + x_pos ** 2)
+
+    def call(self, inputs, states):
+        nu, g, dg = states
+
+        FRpre_unit = nu * self.dt * 0.001
+        FRpre_ext = inputs * self.dt * 0.001
+
+
+        if self.pre == self.units:
+            FRpre = FRpre_ext
+        else:
+            FRpre = tf.concat([FRpre_unit, FRpre_ext], axis=1)
+
+
+
+        FRpre_full = self.pconn[tf.newaxis, :, :] * FRpre[:, :, tf.newaxis]
+
+        g_syn = self.gsyn_max * g
+        I_syn = tf.reduce_sum(g_syn * self.ei_sign[tf.newaxis, :, :], axis=1)
+
+        I_total = I_syn + self.I_ext[tf.newaxis, :]
+        nu_new = nu + (self.dt / self.tau_pop[tf.newaxis, :]) * (
+                -nu + self._naka_rushton(I_total))
+
+
+
+        tau12 = self.tau_1 * self.tau_2
+        t12_sum = self.tau_1 + self.tau_2
+
+        dg_new = dg + self.dt * (FRpre_full - t12_sum * dg - g) / tau12
+        g_new = g + self.dt * dg
+
+
+        return nu_new, [nu_new, g_new, dg_new]
+
+
+def gather_params(n_pre=None):
+    if n_pre is None:
+        n_pre = config.N_POP_UNITS + config.N_INPUTS
+    n_units = config.N_POP_UNITS
+
+    e_r = np.ones((n_pre, n_units), dtype=np.float32)
+    e_r[4:6, :] = -1.0
+
+
+    params = {
+        'gsyn_max': np.random.uniform(0.0, 1.0, size=(n_pre, n_units)).astype(np.float32),
+        'tau_1': np.random.uniform(2.0, 6.0, size=(n_pre, n_units)).astype(np.float32),
+        'tau_2': np.random.uniform(10.0, 30.0, size=(n_pre, n_units)).astype(np.float32),
+        'pconn': np.ones((n_pre, n_units), dtype=np.float32),
+        'e_r': e_r.astype(np.float32),
+
+    }
+    return params
+
+def build_model(lr=1e-3, batch_size=1):
+    inputs = Input(shape=(None, config.N_INPUTS), batch_size=batch_size)
+
+    params = gather_params(n_pre=config.N_POP_UNITS + config.N_INPUTS)
+
+
+
+
+    cell = WilsonCowanNetwork(params, dt=config.DT, batch_size=batch_size,
+                               name='wc_layer')
+    # 📊 Сохранение параметров в Excel
+    # print("💾 Saving Wilson-Cowan parameters to Excel...")
+    # with pd.ExcelWriter("wc_layer1_params.xlsx", engine="openpyxl") as writer:
+    #     for name, value in params.items():
+    #         # name = v.name.split(':')[0]  # remove ':0' suffix
+    #         # value = v.numpy()
+    #         # Handle 0D scalars
+    #         if value.ndim == 0:
+    #             df = pd.DataFrame([[value.item()]], columns=[name])
+    #         else:
+    #             df = pd.DataFrame(value)
+    #         df.to_excel(writer, sheet_name=name[:31], index=False)  # Excel limit: 31 chars
+    # print("✅ Saved to wc_layer1_params.xlsx")
+    #
+    # assert(False)
+
+    x = RNN(cell, return_sequences=True, stateful=False, name='wc_rnn')(inputs)
+
+
+
+    model = Model(inputs, x)
+
+    def loss_with_reg(y_true, y_pred):
+        L_mse = tf.keras.losses.MeanSquaredError()(y_true, y_pred[..., :4])
+        # L_wta = config.WTA_WEIGHT * decorrelation_penalty(E_pred)
+        # L_sharp = config.LOSS_WEIGHT_SHARPENING * sharpening_loss(E_pred)
+        # L_ei = config.LOSS_WEIGHT_EI_BALANCE * ei_balance_loss(E_pred)
+
+        return L_mse # + L_wta + L_sharp + L_ei
+
+    model.compile(
+        optimizer=Adam(learning_rate=lr, clipvalue=15.0),
+        loss=loss_with_reg,
+        metrics=[R2Metric()],
+    )
+    return model
+
+
+def load_all_batches(dataset_path):
+    ds = load_dataset_hdf5(dataset_path)
+    n_batches = ds['n_batches']
+    print(f"  Loading {n_batches} batches into RAM...")
+    X_list, Y_list = [], []
+    for i in range(n_batches):
+        b = ds['get_batch'](i)
+        X_list.append(b['inputs'])
+        Y_list.append(b['targets'])
+    ds['file'].close()
+    X = np.concat(X_list).astype(np.float32)
+    Y = np.concat(Y_list).astype(np.float32)
+    print(f"  X: {X.shape}, Y: {Y.shape}, {X.nbytes / 1e6:.1f} MB")
+    return X, Y
+
+
+def train(dataset_path=None, n_epochs=None, learning_rate=None,
+         seed=None, resume=None, n_layers=1, batch_size=None,
+         val_split=0.1):
+    ds_path = dataset_path or os.path.join(
+        os.path.dirname(config.TRAJECTORY_HDF5), 'dataset.h5')
+    n_epochs = n_epochs or config.N_EPOCHS
+    lr = learning_rate or config.LEARNING_RATE
+    batch_size = batch_size or config.BATCH_SIZE
+
+
+    if seed is not None:
+        config.RANDOM_SEED = seed
+    tf.random.set_seed(config.RANDOM_SEED)
+    np.random.seed(config.RANDOM_SEED)
+
+    print(f"Loading dataset from {ds_path}...")
+    X, Y = load_all_batches(ds_path)
+
+    if X.shape[0] > 10:
+        n_val = max(1, int(len(X) * val_split))
+        X_val, Y_val = X[-n_val:], Y[-n_val:]
+        X_train, Y_train = X[:-n_val], Y[:-n_val]
+    else:
+        X_val, Y_val = X, Y
+        X_train, Y_train = X, Y
+
+    print(f"  Train: {X_train.shape[0]} batches, Val: {X_val.shape[0]} batches")
+
+    print(f"Building Wilson-Cowan model ({n_layers} layers)...")
+    model = build_model(lr=lr, batch_size=batch_size)
+    n_vars = sum(int(np.prod(v.shape)) for v in model.trainable_variables)
+    print(f"  Trainable parameters: {n_vars}")
+    for v in model.trainable_variables:
+        print(f"    {v.name}: {tuple(v.shape)}")
+
+    if resume and os.path.exists(resume):
+        print(f"Resuming from {resume}...")
+        model.load_weights(resume)
+
+    callbacks = [NaNStopping(), CheckpointCallback()] #, R2ValidationCallback(X_val, Y_val)]
+
+    t_start = time.time()
+    history = model.fit(
+        X_train, Y_train,
+        epochs=n_epochs,
+        batch_size=batch_size,
+        verbose=2,
+        callbacks=callbacks,
+    )
+    total_dt = time.time() - t_start
+    print(f"Training done in {total_dt/60:.1f} min.")
+
+    y_true = tf.constant(Y_val[:, :, :4], dtype=tf.float32)
+    y_pred = tf.constant(model(X_val, training=False)[:, :, :4])
+
+
+    ss_res = tf.reduce_sum(tf.square(y_true - y_pred))
+    ss_tot = tf.reduce_sum(tf.square(y_true - tf.reduce_mean(y_true, axis=-2,
+                                                             keepdims=True)))
+    final_r2 = float(1.0 - ss_res / (ss_tot + 1e-8))
+    print(f"Final validation R² = {final_r2:.4f}")
+
+    return history.history['loss']
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--dataset', type=str, default=None)
+    parser.add_argument('--epochs', type=int, default=None)
+    parser.add_argument('--lr', type=float, default=None)
+    parser.add_argument('--seed', type=int, default=None)
+    parser.add_argument('--resume', type=str, default=None)
+    parser.add_argument('--batch_size', type=int, default=None)
+    parser.add_argument('--layers', type=int, default=1,
+                        help='Number of WC layers (default: 1)')
+    parser.add_argument('--val_split', type=float, default=0.1,
+                        help='Fraction of data for validation (default: 0.1)')
+    args = parser.parse_args()
+    train(args.dataset, args.epochs, args.lr, seed=args.seed, resume=args.resume,
+          n_layers=args.layers, batch_size=args.batch_size, val_split=args.val_split)
+
+
+if __name__ == '__main__':
+    main()

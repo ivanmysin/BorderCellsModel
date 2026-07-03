@@ -1,4 +1,4 @@
-"""Train border cell network with BPTT.
+"""Train border cell network with adjoint state method.
 
 Usage:
     python train.py [--dataset data/dataset.h5] [--epochs 100] [--lr 1e-3]
@@ -13,11 +13,14 @@ import tensorflow as tf
 
 import config
 import neuraltide as nt
-from neuraltide.core.network import NetworkGraph, NetworkRNN
+from neuraltide.core.network import NetworkGraph
+from neuraltide.model import BrainModelKeras
 from neuraltide.populations import IzhikevichMeanField
 from neuraltide.synapses import TsodyksMarkramSynapse
 from neuraltide.integrators import RK4Integrator
 from neuraltide.training import DivergenceDetector
+from neuraltide.training.adjoint import AdjointSolver
+from neuraltide.training.losses import MSELoss, CompositeLoss, StabilityPenalty
 
 from utils.dataset import load_dataset_hdf5
 from utils.params import (
@@ -33,39 +36,38 @@ from utils.params import (
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 tf.get_logger().setLevel('ERROR')
 
-# Loss component weights (match the previous CompositeLoss config).
 _MSE_WEIGHT = 1.0
 _STAB_WEIGHT = 1e-3
 
 
 @tf.function
-def _bptt_step(network, optimizer, t_seq, inputs, target_4,
-               stab_weight, grad_clip):
-    """One BPTT training step.
+def _adjoint_step(solver, optimizer, t_seq, inputs, target_padded, stab_weight):
+    """One adjoint training step, fully compiled with @tf.function.
 
-    The target is passed in as a tensor so the @tf.function trace is shared
-    across batches (target values change, shapes don't).
+    Target is passed as a tensor so the trace is shared across batches.
     """
-    with tf.GradientTape() as tape:
-        output = network(t_seq, inputs=inputs, training=True)
-        pred = output.firing_rates[config.POPULATION_NAME]
-        # MSE on the 4 border units; Basket/Axo (last 2) are ignored.
-        mse = tf.reduce_mean((pred[..., :4] - target_4) ** 2)
-        # Network's forward pass already weights stability_loss by
-        # network._stability_penalty_weight (1e-3); apply the composite weight.
-        loss = mse + stab_weight * output.stability_loss
+    loss_fn = CompositeLoss([
+        (_MSE_WEIGHT, MSELoss(target={config.POPULATION_NAME: target_padded})),
+        (stab_weight, StabilityPenalty()),
+    ])
+    grads, variables, output = solver.compute_gradients(
+        t_seq, inputs, {config.POPULATION_NAME: target_padded}, loss_fn,
+    )
+    loss = loss_fn(output, solver._network)
 
-    grads = tape.gradient(loss, network.trainable_variables)
-    grads, _ = tf.clip_by_global_norm(grads, grad_clip)
     grads_and_vars = [
-        (g, v) for g, v in zip(grads, network.trainable_variables) if g is not None
+        (g, v) for g, v in zip(grads, variables) if g is not None
     ]
-    optimizer.apply_gradients(grads_and_vars)
+    if grads_and_vars:
+        grads_only = [g for g, _ in grads_and_vars]
+        clipped, _ = tf.clip_by_global_norm(grads_only, 1.0)
+        clipped_gv = [(c, v) for (_, v), c in zip(grads_and_vars, clipped)]
+        optimizer.apply_gradients(clipped_gv)
     return loss
 
 
-def build_network() -> NetworkRNN:
-    """Build the vectorized border cell network."""
+def build_network() -> BrainModelKeras:
+    """Build the vectorized border cell network as BrainModelKeras."""
     dt = config.DT
     graph = NetworkGraph(dt=dt)
 
@@ -168,16 +170,17 @@ def build_network() -> NetworkRNN:
                       src=config.POPULATION_NAME, tgt=config.POPULATION_NAME)
 
     graph.validate()
-    return NetworkRNN(
+    return BrainModelKeras(
         graph,
         integrator=RK4Integrator(),
+        dt=dt,
         stability_penalty_weight=1e-3,
     )
 
 
 def train(dataset_path: str = None, n_epochs: int = None,
           learning_rate: float = None, batches_per_epoch: int = None):
-    """Run training loop over dataset batches using BPTT.
+    """Run training loop over dataset batches using adjoint state method.
 
     Each epoch samples `batches_per_epoch` (default 50) random batches
     without replacement from the dataset.
@@ -187,33 +190,33 @@ def train(dataset_path: str = None, n_epochs: int = None,
         os.path.dirname(config.TRAJECTORY_HDF5), 'dataset.h5')
     n_epochs = n_epochs or config.N_EPOCHS
     lr = learning_rate or config.LEARNING_RATE
-    batches_per_epoch = batches_per_epoch or config.N_BATCHES_PER_EPOCH
+
 
     print(f"Loading dataset from {ds_path}...")
     ds = load_dataset_hdf5(ds_path)
     n_batches = ds['n_batches']
     print(f"  {n_batches} batches available, batch_steps={ds['metadata']['batch_steps']}")
-    if batches_per_epoch > n_batches:
-        raise ValueError(
-            f"batches_per_epoch ({batches_per_epoch}) > n_batches ({n_batches})"
-        )
 
     tf.random.set_seed(config.RANDOM_SEED)
     nt.seed_everything(config.RANDOM_SEED)
     np.random.seed(config.RANDOM_SEED)
 
     print("Building network...")
-    network = build_network()
+    model = build_network()
+    network = model.network
     n_vars = sum(np.prod(v.shape) for v in network.trainable_variables)
     print(f"  Trainable parameters: {int(n_vars)}")
 
     optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
+
+    solver = AdjointSolver(network, network._integrator)
+
     divergence_detector = DivergenceDetector()
 
     loss_history = []
     best_loss = float('inf')
 
-    print(f"Training (BPTT): {n_epochs} epochs x {batches_per_epoch} "
+    print(f"Training (adjoint): {n_epochs} epochs x {batches_per_epoch} "
           f"random batches/epoch (out of {n_batches})...")
     for epoch in range(n_epochs):
         epoch_loss = 0.0
@@ -223,15 +226,13 @@ def train(dataset_path: str = None, n_epochs: int = None,
 
         for batch_idx in batch_indices:
             batch = ds['get_batch'](int(batch_idx))
-            t_seq = tf.constant(batch['t_seq'])
-            inputs = network._graph.pack_inputs({
-                'inputs': tf.constant(batch['inputs'], dtype=tf.float32)
-            })
+            t_seq = tf.constant(batch['t_seq'], dtype=tf.float32)
+            inputs = tf.constant(batch['inputs'], dtype=tf.float32)
             target_4 = tf.constant(batch['targets'], dtype=tf.float32)
+            target_padded = tf.pad(target_4, [[0, 0], [0, 0], [0, 2]])
 
-            loss = _bptt_step(
-                network, optimizer, t_seq, inputs, target_4,
-                _STAB_WEIGHT, 1.0,
+            loss = _adjoint_step(
+                solver, optimizer, t_seq, inputs, target_padded, _STAB_WEIGHT,
             )
             loss_val = float(loss)
             if np.isfinite(loss_val):

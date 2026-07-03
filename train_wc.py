@@ -294,14 +294,14 @@ class WilsonCowanNetwork(Layer):
 
     def get_initial_state(self, batch_size=1):
         return [
-            #tf.zeros([batch_size, self.units], dtype=tf.float32),
+            tf.zeros([batch_size, self.units], dtype=tf.float32),
 
-            tf.random.uniform(
-                [batch_size, self.units],
-                minval=0.0,
-                maxval=3.0,
-                dtype=tf.float32,
-            ),
+            # tf.random.uniform(
+            #     [batch_size, self.units],
+            #     minval=0.0,
+            #     maxval=3.0,
+            #     dtype=tf.float32,
+            # ),
 
             tf.random.uniform(
                 [batch_size, self.pre, self.post],

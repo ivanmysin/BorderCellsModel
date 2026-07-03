@@ -77,7 +77,7 @@ BATCH_SIZE = 100
 N_BATCHES = 100
 LEARNING_RATE = 5e-3
 N_BATCHES_PER_EPOCH = 4      # random batches sampled per epoch (dataset has ~600)
-GRAD_METHOD = "bptt"           # "bptt" | "adjoint"
+GRAD_METHOD = "adjoint"         # "bptt" | "adjoint"
 INTEGRATOR = "rk4"            # "euler" | "heun" | "rk4"
 
 # ============================================================
@@ -262,7 +262,7 @@ TRAIN_SYNAPSE_TAU_r = True
 TRAIN_SYNAPSE_TAU_d = True
 
 
-TRAIN_POP_IEXT = False
+TRAIN_POP_IEXT = True
 TRAIN_POP_DELTA_I = False
 
 # ============================================================
