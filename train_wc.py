@@ -668,7 +668,7 @@ def train(dataset_path=None, n_epochs=None, learning_rate=None,
     print(f"Training done in {total_dt/60:.1f} min.")
 
     warmup = config.LOSS_WARMUP_STEPS
-    y_true = tf.constant(Y_val[:, , :4], dtype=tf.float32)
+    y_true = tf.constant(Y_val[:, :, :4], dtype=tf.float32)
     y_pred = tf.constant(model(X_val, training=False)[:, :, :4])
 
 
