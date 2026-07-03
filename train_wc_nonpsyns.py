@@ -356,8 +356,8 @@ def build_model(lr=1e-3, batch_size=1):
 
 
     lr_schedule = tf.keras.optimizers.schedules.CosineDecay(
-        initial_learning_rate=1e-3,
-        decay_steps=1000,
+        initial_learning_rate=lr,
+        decay_steps=100000,
         alpha=0.01
     )
 
