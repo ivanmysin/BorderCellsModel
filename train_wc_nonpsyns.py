@@ -355,11 +355,12 @@ def build_model(lr=1e-3, batch_size=1):
         return L_mse # + L_wta + L_sharp + L_ei
 
 
-    lr_schedule = tf.keras.optimizers.schedules.CosineDecay(
-        initial_learning_rate=lr,
-        decay_steps=100000,
-        alpha=0.01
-    )
+    lr_schedule = lr
+    # tf.keras.optimizers.schedules.CosineDecay(
+    #     initial_learning_rate=lr,
+    #     decay_steps=100000,
+    #     alpha=0.01
+    # )
 
     model.compile(
         optimizer=Adam(learning_rate=lr_schedule, clipnorm=1.0),
