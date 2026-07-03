@@ -294,7 +294,15 @@ class WilsonCowanNetwork(Layer):
 
     def get_initial_state(self, batch_size=1):
         return [
-            tf.zeros([batch_size, self.units], dtype=tf.float32),
+            #tf.zeros([batch_size, self.units], dtype=tf.float32),
+
+            tf.random.uniform(
+                [batch_size, self.units],
+                minval=0.0,
+                maxval=3.0,
+                dtype=tf.float32,
+            ),
+
             tf.random.uniform(
                 [batch_size, self.pre, self.post],
                 minval=config.SYN_INIT_R_LO,
@@ -660,11 +668,10 @@ def train(dataset_path=None, n_epochs=None, learning_rate=None,
     print(f"Training done in {total_dt/60:.1f} min.")
 
     warmup = config.LOSS_WARMUP_STEPS
-    y_true = tf.constant(Y_val[..., warmup:, :4], dtype=tf.float32)
-    y_pred_full = tf.constant(model(X_val, training=False)[..., warmup:, :],
-                              dtype=tf.float32)
-    # Output layout: [E | I_syn]; use the E part for R².
-    y_pred = y_pred_full[..., :config.N_POP_UNITS, :4]
+    y_true = tf.constant(Y_val[:, , :4], dtype=tf.float32)
+    y_pred = tf.constant(model(X_val, training=False)[:, :, :4])
+
+
     ss_res = tf.reduce_sum(tf.square(y_true - y_pred))
     ss_tot = tf.reduce_sum(tf.square(y_true - tf.reduce_mean(y_true, axis=-2,
                           keepdims=True)))
