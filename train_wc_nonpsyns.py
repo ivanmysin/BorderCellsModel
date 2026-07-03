@@ -354,8 +354,15 @@ def build_model(lr=1e-3, batch_size=1):
 
         return L_mse # + L_wta + L_sharp + L_ei
 
+
+    lr_schedule = tf.keras.optimizers.schedules.CosineDecay(
+        initial_learning_rate=1e-3,
+        decay_steps=1000,
+        alpha=0.01
+    )
+
     model.compile(
-        optimizer=Adam(learning_rate=lr, clipvalue=15.0),
+        optimizer=Adam(learning_rate=lr_schedule, clipnorm=1.0),
         loss=loss_with_reg,
         metrics=[R2Metric()],
     )
