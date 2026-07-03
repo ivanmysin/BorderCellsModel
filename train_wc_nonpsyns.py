@@ -348,7 +348,7 @@ def build_model(lr=1e-3, batch_size=1):
     def loss_with_reg(y_true, y_pred):
         L_mse = tf.keras.losses.MeanSquaredError()(y_true, y_pred[..., :4])
 
-        L_cos = tf.keras.losses.CosineSimilarity(axis=-1)(y_true, y_pred[..., :4])
+        L_cos = tf.keras.losses.CosineSimilarity()(y_true, y_pred[..., :4])
 
         # L_wta = config.WTA_WEIGHT * decorrelation_penalty(E_pred)
         # L_sharp = config.LOSS_WEIGHT_SHARPENING * sharpening_loss(E_pred)
