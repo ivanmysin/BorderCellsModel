@@ -30,29 +30,15 @@ import pandas as pd
 import config
 from utils.dataset import load_dataset_hdf5
 
-from tensorflow.keras.constraints import Constraint, NonNeg
 
-class MinMaxWeights(Constraint):
-
-    def __init__(self, min_val=0, max_val=10000):
-        self.min = tf.convert_to_tensor(min_val) if not isinstance(min_val, tf.Tensor) else min_val
-        self.max = tf.convert_to_tensor(max_val) if not isinstance(max_val, tf.Tensor) else max_val
+def _softplus(x):
+    return tf.nn.softplus(x)
 
 
-    def __call__(self, w):
-        return tf.clip_by_value(w, clip_value_min=self.min, clip_value_max=self.max)
-
-    def get_config(self):
-        config = {
-            "min": self.min.numpy().tolist() if hasattr(self.min, "numpy") else self.min.tolist(),
-            "max": self.max.numpy().tolist() if hasattr(self.max, "numpy") else self.max.tolist(),
-        }
-
-        return config
-
-    @classmethod
-    def from_config(cls, config):
-        return cls(**config)
+def _inv_softplus_np(y):
+    """NumPy version for weight initialisation."""
+    y = np.maximum(y, 1e-7)
+    return np.log(np.expm1(y))
 
 
 class NaNStopping(tf.keras.callbacks.Callback):
@@ -208,29 +194,32 @@ class WilsonCowanNetwork(Layer):
             name='I_ext',
         )
 
-        self.gsyn_max = self.add_weight(
+        # ── Reparameterised weights ──────────────────────────────────
+        # gsyn_max: g = softplus(θ), always > 0
+        theta_gsyn = _inv_softplus_np(params['gsyn_max'] * config.SYN_GSYN_INIT_SCALE)
+        self._theta_gsyn = self.add_weight(
             shape=(self.pre, self.post),
-            initializer=tf.constant_initializer(params['gsyn_max']),
+            initializer=tf.constant_initializer(theta_gsyn),
             trainable=config.TRAIN_SYNAPSE_GMAX,
-            name='gsyn_max',
-            constraint=NonNeg(),
+            name='theta_gsyn',
         )
 
-
-        self.tau_1 = self.add_weight(
+        # tau_1: τ_1 = exp(θ_1)
+        theta_tau_1 = np.log(np.maximum(params['tau_1'], 1e-7))
+        self._theta_tau_1 = self.add_weight(
             shape=(self.pre, self.post),
-            initializer=tf.constant_initializer(params['tau_1']),
+            initializer=tf.constant_initializer(theta_tau_1),
             trainable=config.TRAIN_SYNAPSE_TAU_f,
-            name='tau_1',
-            constraint=MinMaxWeights(min_val=2.0, max_val=10.0)
+            name='theta_tau_1',
         )
 
-        self.tau_2 = self.add_weight(
+        # tau_2: τ_2 = exp(θ_2)
+        theta_tau_2 = np.log(np.maximum(params['tau_2'], 1e-7))
+        self._theta_tau_2 = self.add_weight(
             shape=(self.pre, self.post),
-            initializer=tf.constant_initializer(params['tau_2']),
+            initializer=tf.constant_initializer(theta_tau_2),
             trainable=config.TRAIN_SYNAPSE_TAU_d,
-            name='tau_2',
-            constraint=MinMaxWeights(min_val=3.0, max_val=50.0),
+            name='theta_tau_2',
         )
 
         self.state_size = [
@@ -240,6 +229,16 @@ class WilsonCowanNetwork(Layer):
         ]
 
         self.output_size = self.units
+
+    # ── Transform helpers (θ → physical) ─────────────────────────────
+    def _get_gsyn(self):
+        return _softplus(self._theta_gsyn)
+
+    def _get_tau_1(self):
+        return tf.exp(self._theta_tau_1)
+
+    def _get_tau_2(self):
+        return tf.exp(self._theta_tau_2)
 
     def get_initial_state(self, batch_size=1):
 
@@ -272,7 +271,11 @@ class WilsonCowanNetwork(Layer):
 
         FRpre_full = self.pconn[tf.newaxis, :, :] * FRpre[:, :, tf.newaxis]
 
-        g_syn = self.gsyn_max * g
+        gsyn = self._get_gsyn()
+        tau_1 = self._get_tau_1()
+        tau_2 = self._get_tau_2()
+
+        g_syn = gsyn * g
         I_syn = tf.reduce_sum(g_syn * self.ei_sign[tf.newaxis, :, :], axis=1)
 
         I_total = I_syn + self.I_ext[tf.newaxis, :]
@@ -281,8 +284,8 @@ class WilsonCowanNetwork(Layer):
 
 
 
-        tau12 = self.tau_1 * self.tau_2
-        t12_sum = self.tau_1 + self.tau_2
+        tau12 = tau_1 * tau_2
+        t12_sum = tau_1 + tau_2
 
         dg_new = dg + self.dt * (FRpre_full - t12_sum * dg - g) / tau12
         g_new = g + self.dt * dg
