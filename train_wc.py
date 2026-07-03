@@ -374,6 +374,129 @@ class WilsonCowanNetwork(Layer):
         return E_new, [E_new, R_new, U_new, A_new]
 
 
+class WilsonCowanNetwork2ndOrder(WilsonCowanNetwork):
+    """Wilson-Cowan rate model + second-order linear synapse (non-plastic).
+
+    Synapse dynamics (explicit Euler on the 2nd-order ODE):
+        d²g/dt² = (Spre_normed - g - (τ_rise + τ_decay) * dg/dt) / (τ_rise * τ_decay)
+
+    No plasticity state: only g and dg/dt are integrated. τ_f and Uinc are
+    not used — the synapse is a single-shot linear conductance shaped by
+    τ_rise (tau_r) and τ_decay (tau_d). State: E [B, units] + g, dgdt [B, pre, post].
+
+    Reuses _naka_rushton, _get_tau_pop, _get_gsyn from the parent. Overrides
+    __init__ to drop theta_tau_f / theta_Uinc weights entirely.
+    """
+
+    TAU_FLOOR_MS = 0.1  # explicit Euler stability: h < 2*min(τ)
+
+    def __init__(self, params, dt_dim=0.1, batch_size=1, n_pre=None, **kwargs):
+        super(WilsonCowanNetwork, self).__init__(**kwargs)
+        self.dt_dim = float(dt_dim)
+        self.units = config.N_POP_UNITS
+        self.pre = n_pre if n_pre is not None else (config.N_POP_UNITS + config.N_INPUTS)
+        self.post = config.N_POP_UNITS
+
+        self.pconn = tf.constant(params['pconn'], dtype=tf.float32)
+        ei_sign = np.sign(params['e_r'])
+        self.ei_sign = tf.constant(ei_sign, dtype=tf.float32)
+
+        wc_tau = np.array([12.0, 12.0, 12.0, 12.0, 10.0, 10.0], dtype=np.float32)
+        wc_i_ext = np.ones(self.units, dtype=np.float32) + 5.0
+
+        theta_tau_pop = np.log(wc_tau)
+        self._theta_tau_pop = self.add_weight(
+            shape=(self.units,),
+            initializer=tf.constant_initializer(theta_tau_pop),
+            trainable=False,
+            name='theta_tau_pop',
+        )
+        self.I_ext = self.add_weight(
+            shape=(self.units,),
+            initializer=tf.constant_initializer(wc_i_ext),
+            trainable=config.TRAIN_POP_IEXT,
+            name='I_ext',
+        )
+        theta_gsyn = _inv_softplus_np(params['gsyn_max'] * config.SYN_GSYN_INIT_SCALE)
+        self._theta_gsyn = self.add_weight(
+            shape=(self.pre, self.post),
+            initializer=tf.constant_initializer(theta_gsyn),
+            trainable=config.TRAIN_SYNAPSE_GMAX,
+            name='theta_gsyn',
+        )
+        tau_d = np.maximum(params['tau_d'], self.TAU_FLOOR_MS)
+        tau_r = np.maximum(params['tau_r'], self.TAU_FLOOR_MS)
+        self._theta_tau_d = self.add_weight(
+            shape=(self.pre, self.post),
+            initializer=tf.constant_initializer(np.log(tau_d)),
+            trainable=config.TRAIN_SYNAPSE_TAU_d,
+            name='theta_tau_d',
+        )
+        self._theta_tau_r = self.add_weight(
+            shape=(self.pre, self.post),
+            initializer=tf.constant_initializer(np.log(tau_r)),
+            trainable=config.TRAIN_SYNAPSE_TAU_r,
+            name='theta_tau_r',
+        )
+
+        self.state_size = [
+            tf.TensorShape([batch_size, self.units]),
+            tf.TensorShape([batch_size, self.pre, self.post]),
+            tf.TensorShape([batch_size, self.pre, self.post]),
+        ]
+        self.output_size = self.units * 2
+
+    def _get_tau_d(self):
+        return tf.maximum(tf.exp(self._theta_tau_d), self.TAU_FLOOR_MS)
+
+    def _get_tau_r(self):
+        return tf.maximum(tf.exp(self._theta_tau_r), self.TAU_FLOOR_MS)
+
+    def get_initial_state(self, batch_size=1):
+        return [
+            tf.random.uniform(
+                [batch_size, self.units],
+                minval=0.0, maxval=3.0,
+                dtype=tf.float32,
+            ),
+            tf.zeros([batch_size, self.pre, self.post], dtype=tf.float32),
+            tf.zeros([batch_size, self.pre, self.post], dtype=tf.float32),
+        ]
+
+    def call(self, inputs, states):
+        E, g, dgdt = states
+        ext = inputs
+        h = self.dt_dim
+
+        tau_pop = self._get_tau_pop()
+        gsyn = self._get_gsyn()
+        tau_d = self._get_tau_d()
+        tau_r = self._get_tau_r()
+
+        FRpre_unit = E * self.dt_dim * 0.001
+        FRpre_ext = ext * self.dt_dim * 0.001
+        if self.pre == self.units:
+            FRpre = FRpre_ext
+        else:
+            FRpre = tf.concat([FRpre_unit, FRpre_ext], axis=1)
+        FRpre_full = self.pconn[tf.newaxis, :, :] * FRpre[:, :, tf.newaxis]
+
+        Spre = tf.clip_by_value(FRpre_full, 0.0, 1.0)
+
+        denom = tau_r * tau_d
+        dgdt_new = dgdt + h * (Spre - g - (tau_r + tau_d) * dgdt) / denom
+        g_new = g + h * dgdt_new
+
+        g_syn = gsyn * g_new * self.ei_sign[tf.newaxis, :, :]
+        I_syn = tf.reduce_sum(g_syn * FRpre_full, axis=1)
+
+        I_total = I_syn + self.I_ext[tf.newaxis, :]
+        E_new = E + (h / tau_pop[tf.newaxis, :]) * (
+            -E + self._naka_rushton(I_total))
+
+        return E_new, [E_new, g_new, dgdt_new]
+
+
 def gather_params(n_pre=None):
     if n_pre is None:
         n_pre = config.N_POP_UNITS + config.N_INPUTS
@@ -500,7 +623,24 @@ def synapse_dead_zone_penalty(I_syn):
     return config.SYN_DEAD_ZONE_WEIGHT * tf.reduce_mean(tf.nn.softplus(z))
 
 
-def build_model(lr=1e-3, batch_size=1, n_layers=2):
+def build_model(lr=1e-3, batch_size=1, n_layers=2, synapse_model='tm'):
+    """Build Wilson-Cowan model.
+
+    synapse_model:
+        'tm'            — Tsodyks-Markram (plastic, 3-state: R, U, A).
+        'second_order'  — 2nd-order linear ODE (non-plastic, 2-state: g, dgdt).
+    """
+    synapse_model = synapse_model.lower()
+    cell_cls = {
+        'tm': WilsonCowanNetwork,
+        'second_order': WilsonCowanNetwork2ndOrder,
+    }.get(synapse_model)
+    if cell_cls is None:
+        raise ValueError(
+            f"Unknown synapse_model: {synapse_model!r}. Use 'tm' or 'second_order'.")
+
+    print(f"  Synapse model: {synapse_model}  ({cell_cls.__name__})")
+
     inputs = Input(shape=(None, config.N_INPUTS), batch_size=batch_size)
 
     params1 = gather_params(n_pre=config.N_POP_UNITS + config.N_INPUTS)
@@ -508,8 +648,8 @@ def build_model(lr=1e-3, batch_size=1, n_layers=2):
 
 
 
-    cell1 = WilsonCowanNetwork(params1, dt_dim=config.DT, batch_size=batch_size,
-                               name='wc_layer1')
+    cell1 = cell_cls(params1, dt_dim=config.DT, batch_size=batch_size,
+                     name='wc_layer1')
     # # 📊 Сохранение параметров в Excel
     # print("💾 Saving Wilson-Cowan parameters to Excel...")
     # with pd.ExcelWriter("wc_layer1_params.xlsx", engine="openpyxl") as writer:
@@ -548,8 +688,8 @@ def build_model(lr=1e-3, batch_size=1, n_layers=2):
         #
         # assert(False)
 
-        cell2 = WilsonCowanNetwork(params2, dt_dim=config.DT, batch_size=batch_size,
-                                   n_pre=n_pre2, name='wc_layer2')
+        cell2 = cell_cls(params2, dt_dim=config.DT, batch_size=batch_size,
+                         n_pre=n_pre2, name='wc_layer2')
         # Layer 1 output is [E | I_syn]; pass only E to layer 2 so its
         # recurrent/feedforward synapses receive firing rates, not currents.
         E_from_layer1 = x[..., :config.N_POP_UNITS]
@@ -614,7 +754,7 @@ def load_all_batches(dataset_path):
 
 def train(dataset_path=None, n_epochs=None, learning_rate=None,
           batches_per_epoch=None, seed=None, resume=None, n_layers=1, batch_size=None,
-          val_split=0.1):
+          val_split=0.1, synapse_model='tm'):
     ds_path = dataset_path or os.path.join(
         os.path.dirname(config.TRAJECTORY_HDF5), 'dataset.h5')
     n_epochs = n_epochs or config.N_EPOCHS
@@ -644,7 +784,8 @@ def train(dataset_path=None, n_epochs=None, learning_rate=None,
     print(f"  Train: {X_train.shape[0]} batches, Val: {X_val.shape[0]} batches")
 
     print(f"Building Wilson-Cowan model ({n_layers} layers)...")
-    model = build_model(lr=lr, batch_size=batch_size, n_layers=n_layers)
+    model = build_model(lr=lr, batch_size=batch_size, n_layers=n_layers,
+                        synapse_model=synapse_model)
     n_vars = sum(int(np.prod(v.shape)) for v in model.trainable_variables)
     print(f"  Trainable parameters: {n_vars}")
     for v in model.trainable_variables:
@@ -693,9 +834,14 @@ def main():
                         help='Number of WC layers (default: 1)')
     parser.add_argument('--val_split', type=float, default=0.1,
                         help='Fraction of data for validation (default: 0.1)')
+    parser.add_argument('--synapse', type=str, default='tm',
+                        choices=['tm', 'second_order'],
+                        help="Synapse model: 'tm' (Tsodyks-Markram, plastic) or "
+                             "'second_order' (2nd-order linear ODE, non-plastic)")
     args = parser.parse_args()
     train(args.dataset, args.epochs, args.lr, seed=args.seed, resume=args.resume,
-          n_layers=args.layers, batch_size=args.batch_size, val_split=args.val_split)
+          n_layers=args.layers, batch_size=args.batch_size,
+          val_split=args.val_split, synapse_model=args.synapse)
 
 
 if __name__ == '__main__':
