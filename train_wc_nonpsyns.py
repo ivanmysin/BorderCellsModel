@@ -259,8 +259,8 @@ class WilsonCowanNetwork(Layer):
     def call(self, inputs, states):
         nu, g, dg = states
 
-        FRpre_unit = nu * self.dt * 0.001
-        FRpre_ext = inputs * self.dt * 0.001
+        FRpre_unit = nu * self.dt # * 0.001
+        FRpre_ext = inputs * self.dt # * 0.001
 
 
         if self.pre == self.units:
@@ -301,7 +301,7 @@ def gather_params(n_pre=None):
 
 
     params = {
-        'gsyn_max': np.random.uniform(0.0, 1.0, size=(n_pre, n_units)).astype(np.float32),
+        'gsyn_max': np.random.uniform(0.0, 0.0001, size=(n_pre, n_units)).astype(np.float32),
         'tau_1': np.random.uniform(2.0, 6.0, size=(n_pre, n_units)).astype(np.float32),
         'tau_2': np.random.uniform(10.0, 30.0, size=(n_pre, n_units)).astype(np.float32),
         'pconn': np.ones((n_pre, n_units), dtype=np.float32),
