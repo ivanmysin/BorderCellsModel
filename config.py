@@ -262,7 +262,7 @@ TRAIN_SYNAPSE_TAU_r = True
 TRAIN_SYNAPSE_TAU_d = True
 
 
-TRAIN_POP_IEXT = True
+TRAIN_POP_IEXT = False
 TRAIN_POP_DELTA_I = False
 
 # ============================================================

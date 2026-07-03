@@ -198,7 +198,7 @@ class WilsonCowanNetwork(Layer):
 
 
         wc_tau = np.array([12.0, 12.0, 12.0, 12.0, 10.0, 10.0], dtype=np.float32)
-        wc_i_ext = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32)
+        wc_i_ext = np.ones( self.units, dtype=np.float32 ) + 5.0
 
         # ── Reparameterised weights ──────────────────────────────────
         # tau_pop: τ = exp(θ), no constraint needed on θ
