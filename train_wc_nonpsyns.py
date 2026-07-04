@@ -385,7 +385,7 @@ def build_model(lr=1e-3, batch_size=1):
     model = Model(inputs, x)
 
     def loss_with_reg(y_true, y_pred):
-        L_mse = tf.keras.losses.mean_squared_logarithmic_error(y_true, y_pred)  #      #tf.keras.losses.MeanSquaredError()(y_true, y_pred[..., :4])  #      #tf.keras.losses.MeanSquaredError()(y_true, y_pred[..., :4])  #      #tf.keras.losses
+        L_mse = tf.keras.losses.MSLE(y_true, y_pred)  #      #tf.keras.losses.MeanSquaredError()(y_true, y_pred[..., :4])  #      #tf.keras.losses.MeanSquaredError()(y_true, y_pred[..., :4])  #      #tf.keras.losses
 
         L_wta = config.WTA_WEIGHT * decorrelation_penalty(y_pred)
         L_sharp = config.LOSS_WEIGHT_SHARPENING * sharpening_loss(y_pred)
