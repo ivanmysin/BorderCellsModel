@@ -159,10 +159,10 @@ F_MAX_BORDER = 15.0            # Hz, peak border cell firing
 LOSS_WEIGHT_MSE = 1.0
 LOSS_WEIGHT_FR = 0.001
 LOSS_WEIGHT_SPARSITY = 0.005
-WTA_WEIGHT = 1e-3                    # decorrelation penalty weight
+WTA_WEIGHT = 5e-2                    # decorrelation penalty weight
 L2_GSYN_WEIGHT = 1e-3                # L2 penalty on gsyn_max
-LOSS_WEIGHT_SHARPENING = 0.001         # sparse border-cell activity (winner-take-all)
-LOSS_WEIGHT_EI_BALANCE = 0.001         # inhibitory activity ∝ excitatory activity
+LOSS_WEIGHT_SHARPENING = 0.05         # sparse border-cell activity (winner-take-all)
+LOSS_WEIGHT_EI_BALANCE = 0.05         # inhibitory activity ∝ excitatory activity
 
 # ============================================================
 # Population parameters (dimensional mode — loaded from CSV)
