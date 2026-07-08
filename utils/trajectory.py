@@ -137,3 +137,37 @@ def generate_trajectory_batch(gen: TrajectoryGenerator,
     for key in trajs[0]:
         result[key] = np.stack([t[key] for t in trajs], axis=0)
     return result
+
+
+def generate_concatenated_trajectories(gen: TrajectoryGenerator,
+                                       trial_duration: float,
+                                       n_trials: int) -> dict:
+    """Generate n_trials trajectories, each of trial_duration seconds, concatenated
+    along the time axis.
+
+    Each trial starts with a fresh agent (and thus a fresh random position); the
+    network's internal state across trials is preserved by the caller (stateful
+    RNN), but the trajectory stream itself is discontinuous at trial boundaries.
+
+    Args:
+        gen: TrajectoryGenerator instance (uses its RNG state, advanced per trial)
+        trial_duration: seconds per trial
+        n_trials: number of trials to generate
+
+    Returns:
+        dict with the same keys as TrajectoryGenerator.generate(), with each
+        array of length n_trials * n_steps_per_trial. The 't' array is reset to
+        start at 0 for the whole concatenated stream.
+    """
+    trajs = []
+    for i in range(n_trials):
+        traj = gen.generate(trial_duration)
+        trajs.append(traj)
+        if n_trials >= 10 and (i + 1) % max(1, n_trials // 10) == 0:
+            print(f"  generated {i + 1}/{n_trials} trials")
+
+    result = {}
+    for key in trajs[0]:
+        result[key] = np.concatenate([t[key] for t in trajs], axis=0)
+
+    return result

@@ -471,7 +471,35 @@ def save_training_results(loss_history, model):
 
 
 def train(dataset_path=None, n_epochs=None, learning_rate=None,
-          batches_per_epoch=None, seed=None, resume=None):
+          batches_per_epoch=None, seed=None, resume=None,
+          start_batch=None, reset_state_per_epoch=True,
+          checkpoint_dir=None):
+    """Train the stateful border cell RNN.
+
+    Each epoch processes `batches_per_epoch` consecutive stored batches
+    sequentially; the cell's internal state (r, v, w, R, U, A) propagates
+    across these calls so the simulation is continuous. State is reset to
+    the cell's initial state at the start of each epoch by default
+    (set ``reset_state_per_epoch=False`` to keep state across epochs).
+
+    Args:
+        dataset_path: path to ``data/dataset.h5``.
+        n_epochs: number of epochs (default config.N_EPOCHS).
+        learning_rate: Adam LR (default config.LEARNING_RATE).
+        batches_per_epoch: sequential batches per epoch (default
+            config.N_BATCHES_PER_EPOCH).
+        seed: RNG seed (default config.RANDOM_SEED).
+        resume: path to a previous weights file to load before training.
+        start_batch: index of the first stored batch to feed each epoch.
+            ``None`` (default) randomises the start each epoch so the
+            network sees different 5 s windows; pass an int to fix it.
+        reset_state_per_epoch: if True (default), call
+            ``rnn_layer.reset_states()`` at the start of each epoch so
+            the network is initialised freshly each time. Set False to
+            carry state across epochs.
+        checkpoint_dir: where to save per-epoch checkpoints (default
+            ``results/checkpoints``).
+    """
     ds_path = dataset_path or os.path.join(
         os.path.dirname(config.TRAJECTORY_HDF5), 'dataset.h5')
     n_epochs = n_epochs or config.N_EPOCHS
@@ -496,10 +524,8 @@ def train(dataset_path=None, n_epochs=None, learning_rate=None,
         raise ValueError(
             f"batches_per_epoch ({batches_per_epoch}) > n_batches ({n_batches})")
 
-
-
-    print("Building model...")
-    model = build_model(lr, batch_size=config.BATCH_SIZE)
+    print("Building model (stateful RNN, batch_size=1)...")
+    model = build_model(lr, batch_size=1)
     n_vars = sum(int(np.prod(v.shape)) for v in model.trainable_variables)
     print(f"  Trainable parameters: {n_vars}")
     print(f"  Trainable variables: {[v.name for v in model.trainable_variables]}")
@@ -508,23 +534,77 @@ def train(dataset_path=None, n_epochs=None, learning_rate=None,
         print(f"Resuming from {resume}...")
         load_pretrained(model, resume)
 
+    rnn_layer = model.get_layer('border_rnn')
+    checkpoint_dir = checkpoint_dir or os.path.join(
+        config.RESULTS_DIR, 'checkpoints')
+    os.makedirs(checkpoint_dir, exist_ok=True)
 
-    nan_cb = NaNStoppingCallback()
-    ckpt_cb = CheckpointCallback()
-    callbacks = [nan_cb, ckpt_cb]
+    max_start = max(0, n_batches - batches_per_epoch)
+    log_every = max(1, n_epochs // 20)
 
+    print(f"Training (stateful): {n_epochs} epochs × {batches_per_epoch} "
+          f"sequential batches/epoch (out of {n_batches}); "
+          f"reset_state_per_epoch={reset_state_per_epoch}...")
+
+    loss_history = []
     t_start = time.time()
-    history = model.fit(
-        X, Y,
-        epochs=n_epochs,
-        batch_size=config.BATCH_SIZE,
-        verbose=2,
-        callbacks=callbacks,
-    )
+    for epoch in range(n_epochs):
+        if reset_state_per_epoch:
+            rnn_layer.reset_states()
+
+        if start_batch is not None:
+            start = start_batch
+        elif max_start > 0:
+            start = int(np.random.randint(0, max_start + 1))
+        else:
+            start = 0
+
+        epoch_loss = 0.0
+        n_finite = 0
+        for i in range(batches_per_epoch):
+            x_batch = X[start + i:start + i + 1]
+            y_batch = Y[start + i:start + i + 1]
+            loss = model.train_on_batch(x_batch, y_batch)
+            loss_val = float(loss)
+            if not np.isfinite(loss_val):
+                print(f"\n  NaN/Inf at epoch {epoch+1}, batch {i+1} "
+                      f"(loss={loss_val}), stopping.")
+                return loss_history
+            epoch_loss += loss_val
+            n_finite += 1
+
+        avg_loss = epoch_loss / max(n_finite, 1)
+        loss_history.append(avg_loss)
+
+        if (epoch + 1) % log_every == 0 or epoch == 0:
+            elapsed = time.time() - t_start
+            print(f"  Epoch {epoch+1:4d}/{n_epochs} | loss={avg_loss:.6f} "
+                  f"| elapsed={elapsed/60:.1f} min "
+                  f"| start_batch={start}")
+
+        if (epoch + 1) % log_every == 0 or epoch == n_epochs - 1:
+            tag = f"epoch_{epoch + 1:04d}_loss_{avg_loss:.6f}"
+            weights_path = os.path.join(checkpoint_dir, f"{tag}.weights.h5")
+            model.save_weights(weights_path)
+            meta = {
+                'epoch': epoch + 1,
+                'loss': avg_loss,
+                'learning_rate': float(model.optimizer.learning_rate.numpy()),
+                'reset_state_per_epoch': reset_state_per_epoch,
+            }
+            with open(os.path.join(checkpoint_dir, f"{tag}_meta.json"), 'w') as f:
+                json.dump(meta, f, indent=2)
+
+    latest_path = os.path.join(checkpoint_dir, 'latest.weights.h5')
+    model.save_weights(latest_path)
+    history_path = os.path.join(checkpoint_dir, 'loss_history.json')
+    with open(history_path, 'w') as f:
+        json.dump(loss_history, f, indent=2)
+
     total_dt = time.time() - t_start
     print(f"Training done in {total_dt/60:.1f} min.")
 
-    return history.history['loss']
+    return loss_history
 
 
 def main():
@@ -533,13 +613,24 @@ def main():
     parser.add_argument('--epochs', type=int, default=None)
     parser.add_argument('--lr', type=float, default=None)
     parser.add_argument('--seed', type=int, default=None)
-    parser.add_argument('--batches-per-epoch', type=int, default=None)
+    parser.add_argument('--batches-per-epoch', type=int, default=None,
+                        help='Sequential batches per epoch (default '
+                             'config.N_BATCHES_PER_EPOCH). The cell state '
+                             'propagates across these batches.')
+    parser.add_argument('--start-batch', type=int, default=None,
+                        help='Fix the starting stored batch for every epoch '
+                             '(default: random each epoch).')
+    parser.add_argument('--no-reset-state', action='store_true', default=False,
+                        help='Carry RNN state across epochs (continuous run) '
+                             'instead of resetting at the start of each epoch.')
     parser.add_argument('--resume', type=str, default=None,
                         help='Path to a previous results/checkpoints/latest.weights.h5 to '
                              'load trained weights from before training continues.')
     args = parser.parse_args()
     train(args.dataset, args.epochs, args.lr, args.batches_per_epoch,
-          args.seed, args.resume)
+          args.seed, args.resume,
+          start_batch=args.start_batch,
+          reset_state_per_epoch=not args.no_reset_state)
 
 
 if __name__ == '__main__':

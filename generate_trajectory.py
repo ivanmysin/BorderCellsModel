@@ -1,18 +1,28 @@
 """Generate agent trajectories in a 1×1 m arena and save to HDF5.
 
 Usage:
-    python3 generate_trajectory.py [--plot] [--duration 600] [--seed 42]
-"""
+    python3 generate_trajectory.py [--plot] [--duration 10] [--n-trials 180] [--seed 42]
 
+By default generates N_TRIALS=180 short trajectories of TRIAL_DURATION=10 s each
+(per config.py), concatenated into a single trajectory stream. The simulation
+in train_simple.py then splits this stream into BATCH_DURATION=0.1 s chunks and
+feeds them sequentially to a stateful RNN so the network's internal state
+propagates across batches.
+
+Pass --n-trials 1 to fall back to the legacy single-trajectory mode.
+"""
 import os
 import argparse
 import numpy as np
 import h5py
 import config
-from utils.trajectory import TrajectoryGenerator, interpolate_trajectory
+from utils.trajectory import (
+    TrajectoryGenerator, interpolate_trajectory,
+    generate_concatenated_trajectories,
+)
 
 
-def generate_and_save(duration: float, plot: bool = False):
+def generate_and_save(duration: float, plot: bool = False, n_trials: int = 1):
     """Generate trajectory and save to HDF5."""
 
     if config.RANDOM_SEED:
@@ -21,7 +31,14 @@ def generate_and_save(duration: float, plot: bool = False):
         seed = None
 
     gen = TrajectoryGenerator(seed)
-    traj_coarse = gen.generate(duration)
+
+    if n_trials == 1:
+        traj_coarse = gen.generate(duration)
+    else:
+        total = n_trials * duration
+        print(f"Generating {n_trials} trials × {duration:.1f} s = {total:.1f} s total...")
+        traj_coarse = generate_concatenated_trajectories(gen, duration, n_trials)
+
     target_dt = config.DT / 1000.0
     traj = interpolate_trajectory(traj_coarse, target_dt)
 
@@ -33,7 +50,11 @@ def generate_and_save(duration: float, plot: bool = False):
 
     print(f"Trajectory saved to {config.TRAJECTORY_HDF5}")
     n_steps = len(traj["x"])
-    print(f"  Duration: {duration:.1f} s, Steps: {n_steps}")
+    if n_trials == 1:
+        print(f"  Duration: {duration:.1f} s, Steps: {n_steps}")
+    else:
+        print(f"  Trials: {n_trials} × {duration:.1f} s = {n_trials * duration:.1f} s")
+        print(f"  Steps: {n_steps}")
     print(f"  dt: {config.DT:.3f} ms")
     print(f"  d_min range: [{traj['d_min'].min():.1f}, {traj['d_min'].max():.1f}] cm")
     print(f"  x range: [{traj['x'].min():.1f}, {traj['x'].max():.1f}] cm")
@@ -114,13 +135,17 @@ def load_trajectory(path: str = None) -> dict:
 
 def main():
     parser = argparse.ArgumentParser(description="Generate agent trajectory")
-    parser.add_argument("--duration", type=float, default=600.0,
-                        help="Trajectory duration in seconds (default: 600 = 10 min)")
+    parser.add_argument("--duration", type=float, default=config.TRIAL_DURATION,
+                        help=f"Trajectory duration per trial in seconds "
+                             f"(default: {config.TRIAL_DURATION})")
+    parser.add_argument("--n-trials", type=int, default=config.N_TRIALS,
+                        help=f"Number of trials to generate and concatenate "
+                             f"(default: {config.N_TRIALS})")
     parser.add_argument("--plot", action="store_true", default=False,
                         help="Plot trajectory overview")
     args = parser.parse_args()
 
-    generate_and_save(args.duration, plot=args.plot)
+    generate_and_save(args.duration, plot=args.plot, n_trials=args.n_trials)
 
 
 if __name__ == "__main__":

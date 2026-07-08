@@ -10,13 +10,17 @@ Model of border cells in entorhinal cortex: Izhikevich mean-field population (6 
 
 ## Pipeline (run in this order)
 
-1. `python generate_trajectory.py` → `data/trajectory.h5` (RatInABox trajectory, ~275 MB, gitignored, 600 s default).
-2. `python generate_dataset.py` → `data/dataset.h5` (~600 MB, gitignored). Reads trajectory, precomputes 21-channel inputs and 4 wall targets, splits into `BATCH_DURATION` chunks (599 batches × 10 000 steps for a 600 s trajectory).
-3. `python train.py [--dataset PATH] [--epochs N] [--lr RATE] [--seed S] [--batches-per-epoch K]` → `results/training.h5` + `results/training.json`. **Uses BPTT** (`config.GRAD_METHOD='bptt'`, custom `@tf.function _bptt_step` in `train.py`, not the `neuraltide.Trainer`). Each epoch samples `N_BATCHES_PER_EPOCH=50` random batches (without replacement) from the 599 available. Expect ~13 s per batch (T=10 000, BPTT-compiled) → ~11 min/epoch → ~19 h for 100 epochs. First print after epoch 1.
+1. `python generate_trajectory.py [--n-trials N] [--duration S]` → `data/trajectory.h5`. By default generates `N_TRIALS=180` trajectories of `TRIAL_DURATION=10 s` each (per `config.py`), concatenated along the time axis into one stream. Each trial starts a fresh RatInABox `Agent` (random position) so the stream is **discontinuous at trial boundaries**; the network's internal state is what carries over, not the trajectory. Pass `--n-trials 1` for the legacy single-trajectory mode.
+2. `python generate_dataset.py` → `data/dataset.h5`. Reads the (longer) trajectory, precomputes 21-channel inputs and 4 wall targets, splits into `BATCH_DURATION=0.1 s` chunks. With the default 1800 s stream this yields 18000 stored batches.
+3. `python train_simple.py [--dataset PATH] [--epochs N] [--lr RATE] [--seed S] [--batches-per-epoch K] [--start-batch B] [--no-reset-state] [--resume W]` → `results/checkpoints/*.weights.h5` + `results/checkpoints/loss_history.json`. Uses a **stateful Keras RNN** (`RNN(cell, return_sequences=True, stateful=True, name='border_rnn')` with the `BorderMeanFieldNetwork` cell from `train_simple.py`). Training is a manual loop over `model.train_on_batch(...)` so the cell's state (r, v, w, R, U, A) propagates across the `N_BATCHES_PER_EPOCH=4` sequential batches each epoch (≈0.4 s of trajectory per epoch). State resets at the start of each epoch by default; pass `--no-reset-state` for a continuous run. Build with `batch_size=1` (single simulation; the old `config.BATCH_SIZE=1000` is unused). Pass `--start-batch B` to fix the starting batch index, otherwise it randomises each epoch.
 4. `python visualize_results.py` → `results/loss_curve.png`, `pred_vs_target.png`, `rate_maps.png`, `inhibitory_activity.png`.
 5. `python visualize_dataset.py` → `results/dataset_preview.png`.
-6. `python plot_results.py` (legacy — reads `results.npz`; **broken**, the new pipeline writes `training.h5`, not `results.npz`).
+6. `python plot_results.py` (legacy — reads `results.npz`; **broken**, the new pipeline writes `results/training.h5` and `results/checkpoints/`, not `results.npz`).
 7. `python assess_data_quality.py` (requires `pip install scikit-learn matplotlib` first).
+
+## Stateful RNN training (the key change)
+
+The legacy `train.py` (still present, currently the production entry point per `git log`/docs) loads precomputed batches and runs BPTT per batch in isolation — the Izhikevich/Tsodyks state is re-initialised every batch so consecutive batches are not a continuous simulation. `train_simple.py` fixes this by wrapping the `BorderMeanFieldNetwork` cell in a stateful Keras `RNN` and feeding batches with `model.train_on_batch(...)`, which preserves the cell state across calls. The dataset is now expected to be the concatenation of many short trials (so consecutive stored batches correspond to consecutive time), and the cell evolves continuously across them. At trial boundaries the trajectory itself jumps (new random agent position) but the network state keeps going. This matches the user's description in the request: "каждый новый батч продолжал предыдущий".
 
 ## Key files
 
