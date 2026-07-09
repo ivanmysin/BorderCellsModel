@@ -70,12 +70,12 @@ def _mse_loss(y_true, y_pred):
     return tf.reduce_mean(tf.square(y_true - pred_subset))
 
 
-def _build_submodel(params, lr, dt):
+def _build_submodel(params, lr, dt, batch_size=1):
     n_pre = int(params["pconn"].shape[0])
     n_post = int(params["pconn"].shape[1])
     n_inputs = n_pre - n_post
-    inputs = Input(shape=(None, n_inputs), batch_size=1)
-    cell = WilsonCowanSubNetwork(params, dt=dt, batch_size=1,
+    inputs = Input(shape=(None, n_inputs), batch_size=batch_size)
+    cell = WilsonCowanSubNetwork(params, dt=dt, batch_size=batch_size,
                                  n_pre=n_pre, n_units=n_post, n_post=n_post)
     rnn = RNN(cell, return_sequences=True, stateful=True,
               name="wc_rnn_sub")
@@ -100,16 +100,65 @@ def _load_all_batches(dataset_path):
     return np.concat(Xl).astype(np.float32), np.concat(Yl).astype(np.float32)
 
 
-def _train_stateful(model, X, Y_target, n_batches, n_epochs,
-                    batches_per_epoch, start_batch, log_every,
-                    checkpoint_dir, tag_prefix):
-    """Train via a single `model.fit(X, Y, epochs=n_epochs)` call.
+class CheckpointCallback(tf.keras.callbacks.Callback):
+    """Phase 1 callback: reset state per epoch, log + save weights + meta.
 
-    Concatenates `batches_per_epoch` consecutive stored batches into one
-    (1, K*T, n_inputs) sequence. The same data is used for `n_epochs`
-    Keras epochs. A callback resets the stateful RNN's state at every
-    epoch boundary, so state propagates within the K*T-step window but
-    starts fresh each epoch.
+    Mirrors the structure of train_wc_nonpsyns.CheckpointCallback but
+    also resets the stateful RNN's state at every epoch boundary.
+    """
+
+    def __init__(self, rnn_layer, checkpoint_dir, tag_prefix,
+                 n_epochs, log_every):
+        super().__init__()
+        self.rnn_layer = rnn_layer
+        self.checkpoint_dir = checkpoint_dir
+        self.tag_prefix = tag_prefix
+        self.n_epochs = n_epochs
+        self.log_every = max(1, log_every)
+        self.loss_history = []
+
+    def on_epoch_begin(self, epoch, logs=None):
+        self.rnn_layer.reset_states()
+
+    def on_epoch_end(self, epoch, logs=None):
+        loss = float(logs.get('loss', float('nan')))
+        self.loss_history.append(loss)
+        if not np.isfinite(loss):
+            print(f"\n  NaN/Inf at epoch {epoch+1} (loss={loss}).")
+        if (epoch + 1) % self.log_every == 0 or epoch == 0:
+            print(f"  [ckpt] epoch {epoch+1:4d}/{self.n_epochs} "
+                  f"| loss={loss:.6f}")
+        if (epoch + 1) % self.log_every == 0 or epoch == self.n_epochs - 1:
+            os.makedirs(self.checkpoint_dir, exist_ok=True)
+            tag = f"{self.tag_prefix}_epoch_{epoch+1:04d}_loss_{loss:.6f}"
+            self.model.save_weights(
+                os.path.join(self.checkpoint_dir, f"{tag}.weights.h5"))
+            with open(os.path.join(self.checkpoint_dir, f"{tag}_meta.json"),
+                      "w") as f:
+                json.dump({"epoch": epoch + 1, "loss": loss,
+                           "tag_prefix": self.tag_prefix}, f, indent=2)
+
+    def on_train_end(self, logs=None):
+        os.makedirs(self.checkpoint_dir, exist_ok=True)
+        self.model.save_weights(
+            os.path.join(self.checkpoint_dir,
+                         f"{self.tag_prefix}_latest.weights.h5"))
+        with open(os.path.join(self.checkpoint_dir,
+                               f"{self.tag_prefix}_loss_history.json"),
+                  "w") as f:
+            json.dump(self.loss_history, f, indent=2)
+
+
+def _train_stateful(model, X, Y_target, n_batches, n_epochs,
+                    batches_per_epoch, batch_size, start_batch, log_every,
+                    checkpoint_dir, tag_prefix):
+    """Train via a single `model.fit(X, Y, epochs=n_epochs, batch_size=B)` call.
+
+    Samples `batch_size` starting points and stacks `batches_per_epoch`
+    consecutive batches from each into a (B, K*T, n_inputs) array. Each
+    sample is a separate stateful trajectory with its own state; the
+    state propagates within the K*T window and is reset every epoch via
+    the callback.
     """
     rnn_layer = model.get_layer("wc_rnn_sub")
     max_start = max(0, n_batches - batches_per_epoch)
@@ -118,57 +167,43 @@ def _train_stateful(model, X, Y_target, n_batches, n_epochs,
     n_targets = Y_target.shape[2]
 
     if start_batch is None:
-        s = int(np.random.randint(0, max_start + 1)) if max_start > 0 else 0
+        s_list = [int(np.random.randint(0, max_start + 1))
+                  if max_start > 0 else 0
+                  for _ in range(batch_size)]
     else:
-        s = start_batch
+        s_list = [start_batch] * batch_size
 
-    x = X[s:s + batches_per_epoch]
-    y = Y_target[s:s + batches_per_epoch]
-    x = np.ascontiguousarray(x.reshape(1, batches_per_epoch * T, n_inputs))
-    y = np.ascontiguousarray(y.reshape(1, batches_per_epoch * T, n_targets))
+    xs, ys = [], []
+    for s_i in s_list:
+        xs.append(X[s_i:s_i + batches_per_epoch].reshape(
+            batches_per_epoch * T, n_inputs))
+        ys.append(Y_target[s_i:s_i + batches_per_epoch].reshape(
+            batches_per_epoch * T, n_targets))
+    x = np.ascontiguousarray(np.stack(xs))
+    y = np.ascontiguousarray(np.stack(ys))
 
-    loss_history = []
-
-    class EpochCallback(tf.keras.callbacks.Callback):
-        def on_epoch_begin(self, epoch, logs=None):
-            rnn_layer.reset_states()
-
-        def on_epoch_end(self, epoch, logs=None):
-            loss = float(logs.get('loss'))
-            loss_history.append(loss)
-            if not np.isfinite(loss):
-                print(f"\n  NaN/Inf at epoch {epoch+1} (loss={loss}).")
-            if (epoch + 1) % log_every == 0 or epoch == 0:
-                print(f"  epoch {epoch+1:4d}/{n_epochs} | loss={loss:.6f} "
-                      f"| start_batch={s}")
-            if (epoch + 1) % log_every == 0 or epoch == n_epochs - 1:
-                tag = f"{tag_prefix}_epoch_{epoch+1:04d}_loss_{loss:.6f}"
-                model.save_weights(
-                    os.path.join(checkpoint_dir, f"{tag}.weights.h5"))
-                with open(os.path.join(checkpoint_dir, f"{tag}_meta.json"),
-                          "w") as f:
-                    json.dump({"epoch": epoch + 1, "loss": loss,
-                               "tag_prefix": tag_prefix}, f, indent=2)
-
-    model.fit(x, y, epochs=n_epochs, batch_size=1, shuffle=False,
-              verbose=0, callbacks=[EpochCallback()])
-    return loss_history
+    cb = CheckpointCallback(rnn_layer, checkpoint_dir, tag_prefix,
+                            n_epochs, log_every)
+    model.fit(x, y, epochs=n_epochs, batch_size=batch_size, shuffle=False,
+              verbose=2, callbacks=[cb])
+    return cb.loss_history
 
 
 def train_one_submodel(X_idx, X_aug, Y_target, n_epochs, lr,
-                       batches_per_epoch, start_batch, checkpoint_dir,
-                       log_every, seed, teacher_gsyn, dt):
+                       batches_per_epoch, batch_size, start_batch,
+                       checkpoint_dir, log_every, seed, teacher_gsyn, dt):
     name = PYRAMIDAL_NAMES[X_idx]
 
     np.random.seed(seed + X_idx)
     tf.random.set_seed(seed + X_idx)
 
     print(f"\n=== Sub-model for {name} (X_idx={X_idx}) ===")
-    print(f"  Input shape: {X_aug.shape}, target shape: {Y_target.shape}")
+    print(f"  Input shape: {X_aug.shape}, target shape: {Y_target.shape}, "
+          f"batch_size={batch_size}")
 
     params = build_submodel_wc_params(X_idx, teacher_gsyn=teacher_gsyn,
                                       rng_seed=seed)
-    model = _build_submodel(params, lr=lr, dt=dt)
+    model = _build_submodel(params, lr=lr, dt=dt, batch_size=batch_size)
     n_vars = sum(int(np.prod(v.shape)) for v in model.trainable_variables)
     print(f"  Trainable parameters: {n_vars} "
           f"({len(model.trainable_variables)} vars)")
@@ -179,7 +214,7 @@ def train_one_submodel(X_idx, X_aug, Y_target, n_epochs, lr,
     tag_prefix = f"submodel_{name}"
     hist = _train_stateful(
         model, X_aug, Y_target, n_batches, n_epochs, batches_per_epoch,
-        start_batch, log_every, checkpoint_dir, tag_prefix,
+        batch_size, start_batch, log_every, checkpoint_dir, tag_prefix,
     )
 
     final_path = os.path.join(checkpoint_dir, f"{name}_submodel.weights.h5")
@@ -209,6 +244,9 @@ def main():
     p.add_argument("--lr", type=float, default=None)
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--batches-per-epoch", type=int, default=None)
+    p.add_argument("--batch-size", type=int, default=None,
+                   help="Parallel stateful trajectories per sub-model "
+                        "(default config.PHASE1_BATCH_SIZE).")
     p.add_argument("--start-batch", type=int, default=0,
                    help="Fix starting stored batch (default 0).")
     p.add_argument("--teacher-gsyn", type=float, default=1.0,
@@ -223,6 +261,7 @@ def main():
     seed = args.seed if args.seed is not None else config.RANDOM_SEED
     batches_per_epoch = (args.batches_per_epoch
                          or config.N_BATCHES_PER_EPOCH)
+    batch_size = args.batch_size or config.PHASE1_BATCH_SIZE
 
     print("Configuring devices...")
     os.environ.setdefault("CUDA_VISIBLE_DEVICES", "0")
@@ -249,6 +288,7 @@ def main():
             X_idx, X_aug, Y_target,
             n_epochs=n_epochs, lr=lr,
             batches_per_epoch=batches_per_epoch,
+            batch_size=batch_size,
             start_batch=args.start_batch,
             checkpoint_dir=args.checkpoint_dir,
             log_every=max(1, n_epochs // 20),
@@ -269,6 +309,7 @@ def main():
             "n_epochs": n_epochs,
             "lr": lr,
             "batches_per_epoch": batches_per_epoch,
+            "batch_size": batch_size,
             "seed": seed,
             "teacher_gsyn": args.teacher_gsyn,
             "saved_weights": saved_paths,

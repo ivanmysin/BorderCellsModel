@@ -77,6 +77,7 @@ BATCH_SIZE = 1000
 N_BATCHES = 100
 LEARNING_RATE = 5e-3
 N_BATCHES_PER_EPOCH = 4      # random batches sampled per epoch (dataset has ~600)
+PHASE1_BATCH_SIZE = 4         # parallel stateful trajectories per sub-model
 GRAD_METHOD = "adjoint"         # "bptt" | "adjoint"
 INTEGRATOR = "rk4"            # "euler" | "heun" | "rk4"
 
