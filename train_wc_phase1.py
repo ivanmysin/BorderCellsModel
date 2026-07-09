@@ -103,54 +103,55 @@ def _load_all_batches(dataset_path):
 def _train_stateful(model, X, Y_target, n_batches, n_epochs,
                     batches_per_epoch, start_batch, log_every,
                     checkpoint_dir, tag_prefix):
-    """Train via `model.fit()` with one long sequence per epoch.
+    """Train via a single `model.fit(X, Y, epochs=n_epochs)` call.
 
-    Each epoch concatenates `batches_per_epoch` consecutive stored batches
-    into a single (1, K*T, n_inputs) sequence. The stateful RNN processes
-    the long sequence in one `fit(epochs=1)` call, so state propagates
-    across the K batches. `reset_states()` clears it at epoch boundaries.
+    Concatenates `batches_per_epoch` consecutive stored batches into one
+    (1, K*T, n_inputs) sequence. The same data is used for `n_epochs`
+    Keras epochs. A callback resets the stateful RNN's state at every
+    epoch boundary, so state propagates within the K*T-step window but
+    starts fresh each epoch.
     """
     rnn_layer = model.get_layer("wc_rnn_sub")
     max_start = max(0, n_batches - batches_per_epoch)
     T = X.shape[1]
     n_inputs = X.shape[2]
+    n_targets = Y_target.shape[2]
+
+    if start_batch is None:
+        s = int(np.random.randint(0, max_start + 1)) if max_start > 0 else 0
+    else:
+        s = start_batch
+
+    x = X[s:s + batches_per_epoch]
+    y = Y_target[s:s + batches_per_epoch]
+    x = np.ascontiguousarray(x.reshape(1, batches_per_epoch * T, n_inputs))
+    y = np.ascontiguousarray(y.reshape(1, batches_per_epoch * T, n_targets))
 
     loss_history = []
-    t_start = time.time()
-    for epoch in range(n_epochs):
-        rnn_layer.reset_states()
-        s = start_batch if start_batch is not None else (
-            int(np.random.randint(0, max_start + 1)) if max_start > 0 else 0)
 
-        x = X[s:s + batches_per_epoch]
-        y = Y_target[s:s + batches_per_epoch]
-        x = np.ascontiguousarray(x.reshape(1, batches_per_epoch * T, n_inputs))
-        y = np.ascontiguousarray(y.reshape(1, batches_per_epoch * T, y.shape[-1]))
-
-        hist = model.fit(x, y, epochs=1, verbose=0,
-                         batch_size=1, shuffle=False)
-        loss = float(hist.history['loss'][0])
-
-        if not np.isfinite(loss):
-            print(f"\n  NaN/Inf at epoch {epoch+1} "
-                  f"(loss={loss}); resetting state and skipping.")
+    class EpochCallback(tf.keras.callbacks.Callback):
+        def on_epoch_begin(self, epoch, logs=None):
             rnn_layer.reset_states()
-            continue
-        loss_history.append(loss)
 
-        if (epoch + 1) % log_every == 0 or epoch == 0:
-            print(f"  epoch {epoch+1:4d}/{n_epochs} | loss={loss:.6f} "
-                  f"| elapsed={(time.time() - t_start)/60:.1f} min "
-                  f"| start_batch={s}")
+        def on_epoch_end(self, epoch, logs=None):
+            loss = float(logs.get('loss'))
+            loss_history.append(loss)
+            if not np.isfinite(loss):
+                print(f"\n  NaN/Inf at epoch {epoch+1} (loss={loss}).")
+            if (epoch + 1) % log_every == 0 or epoch == 0:
+                print(f"  epoch {epoch+1:4d}/{n_epochs} | loss={loss:.6f} "
+                      f"| start_batch={s}")
+            if (epoch + 1) % log_every == 0 or epoch == n_epochs - 1:
+                tag = f"{tag_prefix}_epoch_{epoch+1:04d}_loss_{loss:.6f}"
+                model.save_weights(
+                    os.path.join(checkpoint_dir, f"{tag}.weights.h5"))
+                with open(os.path.join(checkpoint_dir, f"{tag}_meta.json"),
+                          "w") as f:
+                    json.dump({"epoch": epoch + 1, "loss": loss,
+                               "tag_prefix": tag_prefix}, f, indent=2)
 
-        if (epoch + 1) % log_every == 0 or epoch == n_epochs - 1:
-            tag = f"{tag_prefix}_epoch_{epoch+1:04d}_loss_{loss:.6f}"
-            model.save_weights(
-                os.path.join(checkpoint_dir, f"{tag}.weights.h5"))
-            with open(os.path.join(checkpoint_dir, f"{tag}_meta.json"),
-                      "w") as f:
-                json.dump({"epoch": epoch + 1, "loss": loss,
-                           "tag_prefix": tag_prefix}, f, indent=2)
+    model.fit(x, y, epochs=n_epochs, batch_size=1, shuffle=False,
+              verbose=0, callbacks=[EpochCallback()])
     return loss_history
 
 
