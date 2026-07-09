@@ -22,6 +22,23 @@ Model of border cells in entorhinal cortex: Izhikevich mean-field population (6 
 
 The legacy `train.py` (still present, currently the production entry point per `git log`/docs) loads precomputed batches and runs BPTT per batch in isolation — the Izhikevich/Tsodyks state is re-initialised every batch so consecutive batches are not a continuous simulation. `train_simple.py` fixes this by wrapping the `BorderMeanFieldNetwork` cell in a stateful Keras `RNN` and feeding batches with `model.train_on_batch(...)`, which preserves the cell state across calls. The dataset is now expected to be the concatenation of many short trials (so consecutive stored batches correspond to consecutive time), and the cell evolves continuously across them. At trial boundaries the trajectory itself jumps (new random agent position) but the network state keeps going. This matches the user's description in the request: "каждый новый батч продолжал предыдущий".
 
+### Cell state clipping (mandatory)
+
+`BorderMeanFieldNetwork.call()` clips the cell state to biologically plausible ranges after every RK4 step:
+
+| State | Range | Reason |
+|-------|-------|--------|
+| `r` (rate) | [0, 200] Hz | non-negative, cap at very high rate |
+| `v` (voltage) | [-10, 10] | `v_max = 10` in the cell |
+| `w` (adaptation) | [-50, 50] | adaptation variable |
+| `R, U, A` (synapses) | [0, 1] | Tsodyks-Markram probabilities |
+
+This is required, not optional: the Axo unit has `tau_pop ≈ 0.36 ms` (so `dt/tau ≈ 0.28`, borderline RK4), and once training pushes `I_ext`/`gsyn_max` into a sensitive region, Axo diverges within ~10 timesteps after a state reset (pre-existing FS instability, see AGENTS.md note below). Without clipping, training crashes with NaN at epoch ~3-4 when lr=5e-3. With clipping, the same hyperparameters run indefinitely and loss decreases monotonically (verified 30+ epochs).
+
+## FS instability note (pre-existing)
+
+The Border cell network uses an IzhikevichMeanField with `tau_pop` loaded from the CSV (CA1 Axo-Axonic: `tau_pop = 0.36 ms`). Combined with `dt = 0.1 ms`, this gives `dt/tau ≈ 0.28` for Axo — borderline stable for RK4. After enough gradient updates, parameters drift into a region where Axo diverges. `test_network.py:63-66` documents this; tests only check Border units 0-3 for finiteness. The state clipping above prevents training crashes from this instability.
+
 ## Key files
 
 - `config.py` — single source of truth. All paths, hyperparameters, neuron/synapse type maps, trainable flags. `GRAD_METHOD='bptt'`, `N_BATCHES_PER_EPOCH=50`.

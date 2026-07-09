@@ -271,12 +271,17 @@ class BorderMeanFieldNetwork(Layer):
         A_new = a_ + released
         R_new = r_ - released
 
-        # r_new = tf.where(tf.math.is_finite(r_new), r_new, tf.zeros_like(r_new))
-        # v_new = tf.where(tf.math.is_finite(v_new), v_new, tf.zeros_like(v_new))
-        # w_new = tf.where(tf.math.is_finite(w_new), w_new, tf.zeros_like(w_new))
-        # R_new = tf.where(tf.math.is_finite(R_new), R_new, tf.ones_like(R_new))
-        # U_new = tf.where(tf.math.is_finite(U_new), U_new, tf.zeros_like(U_new))
-        # A_new = tf.where(tf.math.is_finite(A_new), A_new, tf.zeros_like(A_new))
+        # Clip state to a finite, biologically plausible range. The Axo unit
+        # has tau_pop = 0.36 ms (dt/tau = 0.28, borderline stable for RK4);
+        # trained I_ext/gsyn_max can push it past that edge. Clipping here
+        # prevents NaN from contaminating the whole simulation while
+        # letting training continue on the Border units (indices 0-3).
+        r_new = tf.clip_by_value(r_new, 0.0, 200.0)
+        v_new = tf.clip_by_value(v_new, -10.0, 10.0)
+        w_new = tf.clip_by_value(w_new, -50.0, 50.0)
+        R_new = tf.clip_by_value(R_new, 0.0, 1.0)
+        U_new = tf.clip_by_value(U_new, 0.0, 1.0)
+        A_new = tf.clip_by_value(A_new, 0.0, 1.0)
 
         output = r_new / (self.tau_pop * 1e-3)
         return output, [r_new, v_new, w_new, R_new, U_new, A_new]
