@@ -1,16 +1,18 @@
-"""Phase 1: train 4 sub-models, one per Border cell.
+"""Phase 1 (WC): train 4 Wilson-Cowan sub-models, one per Border cell.
 
 Each sub-model has 3 units (Border_X, Basket, Axo) and 24 input channels:
-21 real (d_far, d_near, speed, HD×18) + 3 teacher channels carrying the ideal
-targets of the OTHER three pyramids. Borders are predicted one-at-a-time;
-stateful RNN training (state propagates across batches within an epoch).
+21 real (d_far, d_near, speed, HDx18) + 3 teacher channels carrying the
+ideal targets of the OTHER three pyramids. Borders are predicted one at
+a time; stateful RNN training (state propagates across batches within an
+epoch).
 
 Saves trained weights per sub-model to
-``results/phase1/border_{N,S,E,W}_submodel.weights.h5`` and a matching
+``results/phase1_wc/border_{N,S,E,W}_submodel.weights.h5`` and a matching
 ``.npz`` with the same variable tensors for fast lifting in Phase 2.
 
 Usage:
-    python train_phase1.py [--epochs 30] [--lr 5e-3] [--seed 42]
+    python train_wc_phase1.py [--epochs 30] [--lr 1e-3] [--seed 42]
+                              [--teacher-gsyn 1.0] [--checkpoint-dir DIR]
 """
 import os
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
@@ -32,43 +34,51 @@ from tensorflow.keras.layers import RNN
 from tensorflow.keras.optimizers import Adam
 
 import config
-from train_simple import (
-    BorderMeanFieldNetwork, MinMax, setup_gpu,
-)
 try:
-    from utils.submodel import (
-        build_submodel_params, augment_with_teachers, extract_target_for,
+    from utils.submodel_wc import (
+        WilsonCowanSubNetwork,
+        build_submodel_wc_params,
+        augment_with_teachers,
+        extract_target_for,
     )
 except ModuleNotFoundError as e:
     sys.stderr.write(
         f"ERROR: {e}\n"
-        f"  train_phase1.py expects utils/submodel.py next to it.\n"
-        f"  Make sure you copied utils/submodel.py into the project utils/ "
-        f"directory: {PROJECT_ROOT / 'utils' / 'submodel.py'}\n"
+        f"  train_wc_phase1.py expects utils/submodel_wc.py next to it.\n"
+        f"  Make sure utils/submodel_wc.py exists in: "
+        f"{PROJECT_ROOT / 'utils' / 'submodel_wc.py'}\n"
     )
     raise
 
-from utils.dataset import load_dataset_hdf5
+try:
+    from utils.dataset import load_dataset_hdf5
+except ModuleNotFoundError as e:
+    sys.stderr.write(
+        f"ERROR: {e}\n"
+        f"  train_wc_phase1.py expects utils/dataset.py next to it.\n"
+    )
+    raise
 
-
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 tf.get_logger().setLevel("ERROR")
 
 PYRAMIDAL_NAMES = ["border_N", "border_S", "border_E", "border_W"]
 
 
 def _mse_loss(y_true, y_pred):
-    """Pure MSE on the first ``k`` units of y_pred, where k = #target channels."""
     k = tf.shape(y_true)[-1]
     pred_subset = y_pred[..., :k]
     return tf.reduce_mean(tf.square(y_true - pred_subset))
 
 
-def _build_submodel(params, lr):
-    n_inputs = int(params["pconn"].shape[0]) - int(params["alpha"].shape[0])
+def _build_submodel(params, lr, dt):
+    n_pre = int(params["pconn"].shape[0])
+    n_post = int(params["pconn"].shape[1])
+    n_inputs = n_pre - n_post
     inputs = Input(shape=(None, n_inputs), batch_size=1)
-    cell = BorderMeanFieldNetwork(params, dt_dim=config.DT, batch_size=1)
-    rnn = RNN(cell, return_sequences=True, stateful=True, name="border_rnn_sub")
+    cell = WilsonCowanSubNetwork(params, dt=dt, batch_size=1,
+                                 n_pre=n_pre, n_units=n_post, n_post=n_post)
+    rnn = RNN(cell, return_sequences=True, stateful=True,
+              name="wc_rnn_sub")
     out = rnn(inputs)
     model = Model(inputs, out)
     model.compile(
@@ -90,10 +100,10 @@ def _load_all_batches(dataset_path):
     return np.concat(Xl).astype(np.float32), np.concat(Yl).astype(np.float32)
 
 
-def _train_stateful(model, X, Y_target, n_batches, n_epochs, batches_per_epoch,
-                    start_batch, log_every, checkpoint_dir, tag_prefix):
-    rnn_layer = model.get_layer("border_rnn_sub")
-    rnn_layer.reset_states()
+def _train_stateful(model, X, Y_target, n_batches, n_epochs,
+                    batches_per_epoch, start_batch, log_every,
+                    checkpoint_dir, tag_prefix):
+    rnn_layer = model.get_layer("wc_rnn_sub")
     max_start = max(0, n_batches - batches_per_epoch)
     loss_history = []
     t_start = time.time()
@@ -111,7 +121,7 @@ def _train_stateful(model, X, Y_target, n_batches, n_epochs, batches_per_epoch,
             v = float(loss)
             if not np.isfinite(v):
                 print(f"\n  NaN/Inf at epoch {epoch+1}, batch {i+1} "
-                      f"(loss={v}); resetting state and skipping to next epoch.")
+                      f"(loss={v}); resetting state and skipping.")
                 rnn_layer.reset_states()
                 continue
             epoch_loss += v
@@ -126,18 +136,18 @@ def _train_stateful(model, X, Y_target, n_batches, n_epochs, batches_per_epoch,
 
         if (epoch + 1) % log_every == 0 or epoch == n_epochs - 1:
             tag = f"{tag_prefix}_epoch_{epoch+1:04d}_loss_{avg:.6f}"
-            model.save_weights(os.path.join(checkpoint_dir, f"{tag}.weights.h5"))
-            with open(os.path.join(checkpoint_dir, f"{tag}_meta.json"), "w") as f:
+            model.save_weights(
+                os.path.join(checkpoint_dir, f"{tag}.weights.h5"))
+            with open(os.path.join(checkpoint_dir, f"{tag}_meta.json"),
+                      "w") as f:
                 json.dump({"epoch": epoch + 1, "loss": avg,
                            "tag_prefix": tag_prefix}, f, indent=2)
     return loss_history
 
 
-def train_one_submodel(X_idx: int, X_aug: np.ndarray, Y_target: np.ndarray,
-                       n_epochs: int, lr: float, batches_per_epoch: int,
-                       start_batch, checkpoint_dir: str,
-                       log_every: int, seed: int):
-    """Train one 3-unit sub-model for Border_X_idx. Returns path to weights."""
+def train_one_submodel(X_idx, X_aug, Y_target, n_epochs, lr,
+                       batches_per_epoch, start_batch, checkpoint_dir,
+                       log_every, seed, teacher_gsyn, dt):
     name = PYRAMIDAL_NAMES[X_idx]
 
     np.random.seed(seed + X_idx)
@@ -146,11 +156,14 @@ def train_one_submodel(X_idx: int, X_aug: np.ndarray, Y_target: np.ndarray,
     print(f"\n=== Sub-model for {name} (X_idx={X_idx}) ===")
     print(f"  Input shape: {X_aug.shape}, target shape: {Y_target.shape}")
 
-    params = build_submodel_params(X_idx)
-    model = _build_submodel(params, lr=lr)
+    params = build_submodel_wc_params(X_idx, teacher_gsyn=teacher_gsyn,
+                                      rng_seed=seed)
+    model = _build_submodel(params, lr=lr, dt=dt)
     n_vars = sum(int(np.prod(v.shape)) for v in model.trainable_variables)
-    print(f"  Trainable parameters: {n_vars}  ({len(model.trainable_variables)} vars)")
-    print(f"  Trainable variables: {[v.name for v in model.trainable_variables]}")
+    print(f"  Trainable parameters: {n_vars} "
+          f"({len(model.trainable_variables)} vars)")
+    print(f"  Trainable variables: "
+          f"{[v.name for v in model.trainable_variables]}")
 
     n_batches = X_aug.shape[0]
     tag_prefix = f"submodel_{name}"
@@ -163,12 +176,17 @@ def train_one_submodel(X_idx: int, X_aug: np.ndarray, Y_target: np.ndarray,
     model.save_weights(final_path)
     print(f"  Final weights saved to {final_path}")
 
-    layer = model.get_layer("border_rnn_sub").cell
-    var_names = ["I_ext", "gsyn_max", "tau_f", "tau_d", "tau_r", "Uinc"]
+    layer = model.get_layer("wc_rnn_sub").cell
     npz_path = os.path.join(checkpoint_dir, f"{name}_submodel_vars.npz")
     np.savez(
         npz_path,
-        **{name: getattr(layer, name).numpy() for name in var_names},
+        I_ext=layer.I_ext.numpy(),
+        theta_gsyn=layer._theta_gsyn.numpy(),
+        theta_tau_1=layer._theta_tau_1.numpy(),
+        theta_tau_2=layer._theta_tau_2.numpy(),
+        gsyn_max=layer._get_gsyn().numpy(),
+        tau_1=layer._get_tau_1().numpy(),
+        tau_2=layer._get_tau_2().numpy(),
     )
     print(f"  Variable npz saved to {npz_path}")
     return final_path, hist
@@ -183,17 +201,27 @@ def main():
     p.add_argument("--batches-per-epoch", type=int, default=None)
     p.add_argument("--start-batch", type=int, default=0,
                    help="Fix starting stored batch (default 0).")
+    p.add_argument("--teacher-gsyn", type=float, default=1.0,
+                   help="Initial gsyn_max on teacher rows "
+                        "(default 1.0, vs ~1e-4 random).")
     p.add_argument("--checkpoint-dir", type=str,
-                   default=os.path.join(config.RESULTS_DIR, "phase1"))
+                   default=os.path.join(config.RESULTS_DIR, "phase1_wc"))
     args = p.parse_args()
 
-    n_epochs   = args.epochs   or config.N_EPOCHS
-    lr         = args.lr       or config.LEARNING_RATE
-    seed       = args.seed     if args.seed is not None else config.RANDOM_SEED
-    batches_per_epoch = args.batches_per_epoch or config.N_BATCHES_PER_EPOCH
+    n_epochs = args.epochs or config.N_EPOCHS
+    lr = args.lr or config.LEARNING_RATE
+    seed = args.seed if args.seed is not None else config.RANDOM_SEED
+    batches_per_epoch = (args.batches_per_epoch
+                         or config.N_BATCHES_PER_EPOCH)
 
     print("Configuring devices...")
-    setup_gpu()
+    os.environ.setdefault("CUDA_VISIBLE_DEVICES", "0")
+    gpus = tf.config.list_physical_devices("GPU")
+    for g in gpus:
+        try:
+            tf.config.experimental.set_memory_growth(g, True)
+        except Exception:
+            pass
 
     ds_path = args.dataset or os.path.join(
         os.path.dirname(config.TRAJECTORY_HDF5), "dataset.h5")
@@ -215,6 +243,8 @@ def main():
             checkpoint_dir=args.checkpoint_dir,
             log_every=max(1, n_epochs // 20),
             seed=seed,
+            teacher_gsyn=args.teacher_gsyn,
+            dt=config.DT,
         )
         saved_paths.append(path)
         np.savez(
@@ -230,9 +260,10 @@ def main():
             "lr": lr,
             "batches_per_epoch": batches_per_epoch,
             "seed": seed,
+            "teacher_gsyn": args.teacher_gsyn,
             "saved_weights": saved_paths,
         }, f, indent=2)
-    print(f"\nPhase 1 complete. Summary → {summary_path}")
+    print(f"\nPhase 1 (WC) complete. Summary -> {summary_path}")
 
 
 if __name__ == "__main__":

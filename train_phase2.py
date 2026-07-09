@@ -26,17 +26,37 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
 import argparse
 import json
+import sys
 import time
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 import numpy as np
 import tensorflow as tf
 tf.get_logger().setLevel("ERROR")
 
 import config
-from train_simple import (
-    BorderMeanFieldNetwork, build_model, setup_gpu, decorrelation_penalty,
-)
-from utils.dataset import load_dataset_hdf5
+try:
+    from train_simple import (
+        BorderMeanFieldNetwork, build_model, setup_gpu, decorrelation_penalty,
+    )
+except ModuleNotFoundError as e:
+    sys.stderr.write(
+        f"ERROR: {e}\n"
+        f"  train_phase2.py expects train_simple.py next to it.\n"
+    )
+    raise
+try:
+    from utils.dataset import load_dataset_hdf5
+except ModuleNotFoundError as e:
+    sys.stderr.write(
+        f"ERROR: {e}\n"
+        f"  train_phase2.py expects utils/dataset.py next to it.\n"
+    )
+    raise
 
 
 PYRAMIDAL_NAMES = ["border_N", "border_S", "border_E", "border_W"]
