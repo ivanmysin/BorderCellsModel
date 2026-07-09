@@ -194,57 +194,58 @@ def _mse_loss_with_reg(y_true, y_pred):
 
 def _train_stateful(model, X, Y, n_batches, n_epochs, batches_per_epoch,
                     start_batch, log_every, checkpoint_dir):
-    """Train statefully by collapsing `batches_per_epoch` consecutive batches
-    into ONE long sequence (1, K*T, n_inputs) per epoch.
+    """Train via `model.fit()` with one long sequence per epoch.
 
-    This avoids per-batch GPU<->CPU sync (which `float(loss)` in a manual
-    train_on_batch loop would force). State propagates within the single
-    call; `reset_states()` clears it at epoch boundaries.
+    Each epoch concatenates `batches_per_epoch` consecutive stored batches
+    into a single (1, K*T, n_inputs) sequence. The stateful RNN processes
+    the long sequence in one `fit(epochs=1)` call, so state propagates
+    across the K batches. `reset_states()` clears it at epoch boundaries.
     """
-    rnn_layer = model.get_layer("border_rnn").cell
+    rnn = model.get_layer("border_rnn")
     max_start = max(0, n_batches - batches_per_epoch)
     T = X.shape[1]
     n_inputs = X.shape[2]
 
     model.compile(
         optimizer=tf.keras.optimizers.Adam(
-            learning_rate=model.optimizer.learning_rate, clipvalue=10.0),
+            learning_rate=float(model.optimizer.learning_rate),
+            clipvalue=10.0),
         loss=_mse_loss_with_reg,
     )
 
     loss_history = []
     t_start = time.time()
     for epoch in range(n_epochs):
-        rnn_layer.reset_states()
+        rnn.reset_states()
         s = start_batch if start_batch is not None else (
             int(np.random.randint(0, max_start + 1)) if max_start > 0 else 0)
 
         x = X[s:s + batches_per_epoch]
         y = Y[s:s + batches_per_epoch]
         x = np.ascontiguousarray(x.reshape(1, batches_per_epoch * T, n_inputs))
-        y = np.ascontiguousarray(y.reshape(1, batches_per_epoch * T, 1))
+        y = np.ascontiguousarray(y.reshape(1, batches_per_epoch * T, y.shape[-1]))
 
-        loss = model.train_on_batch(x, y)
-        v = float(loss)
-        if not np.isfinite(v):
+        hist = model.fit(x, y, epochs=1, verbose=0,
+                         batch_size=1, shuffle=False)
+        loss = float(hist.history['loss'][0])
+        if not np.isfinite(loss):
             print(f"\n  NaN/Inf at epoch {epoch+1} "
-                  f"(loss={v}); resetting state and skipping.")
-            rnn_layer.reset_states()
+                  f"(loss={loss}); resetting state and skipping.")
+            rnn.reset_states()
             continue
-        avg = v
-        loss_history.append(avg)
+        loss_history.append(loss)
 
         if (epoch + 1) % log_every == 0 or epoch == 0:
-            print(f"  epoch {epoch+1:4d}/{n_epochs} | loss={avg:.6f} "
+            print(f"  epoch {epoch+1:4d}/{n_epochs} | loss={loss:.6f} "
                   f"| elapsed={(time.time() - t_start)/60:.1f} min "
                   f"| start_batch={s}")
 
         if (epoch + 1) % log_every == 0 or epoch == n_epochs - 1:
-            tag = f"phase2_epoch_{epoch+1:04d}_loss_{avg:.6f}"
+            tag = f"phase2_epoch_{epoch+1:04d}_loss_{loss:.6f}"
             weights_path = os.path.join(checkpoint_dir, f"{tag}.weights.h5")
             model.save_weights(weights_path)
             with open(os.path.join(checkpoint_dir, f"{tag}_meta.json"), "w") as f:
-                json.dump({"epoch": epoch + 1, "loss": avg}, f, indent=2)
+                json.dump({"epoch": epoch + 1, "loss": loss}, f, indent=2)
     return loss_history
 
 
