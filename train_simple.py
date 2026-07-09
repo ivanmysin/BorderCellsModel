@@ -124,9 +124,9 @@ class BorderMeanFieldNetwork(Layer):
     def __init__(self, params, dt_dim=0.1, batch_size=1, **kwargs):
         super().__init__(**kwargs)
         self.dt_dim = float(dt_dim)
-        self.units = 6
-        self.pre = config.N_POP_UNITS + config.N_INPUTS
-        self.post = config.N_POP_UNITS
+        self.units = int(np.asarray(params['alpha']).shape[0])
+        self.pre = int(np.asarray(params['pconn']).shape[0])
+        self.post = int(np.asarray(params['pconn']).shape[1])
         self.PI = float(np.pi)
         self.v_max = 10.0
 

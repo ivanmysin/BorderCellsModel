@@ -13,6 +13,25 @@ Model of border cells in entorhinal cortex: Izhikevich mean-field population (6 
 1. `python generate_trajectory.py [--n-trials N] [--duration S]` → `data/trajectory.h5`. By default generates `N_TRIALS=180` trajectories of `TRIAL_DURATION=10 s` each (per `config.py`), concatenated along the time axis into one stream. Each trial starts a fresh RatInABox `Agent` (random position) so the stream is **discontinuous at trial boundaries**; the network's internal state is what carries over, not the trajectory. Pass `--n-trials 1` for the legacy single-trajectory mode.
 2. `python generate_dataset.py` → `data/dataset.h5`. Reads the (longer) trajectory, precomputes 21-channel inputs and 4 wall targets, splits into `BATCH_DURATION=0.1 s` chunks. With the default 1800 s stream this yields 18000 stored batches.
 3. `python train_simple.py [--dataset PATH] [--epochs N] [--lr RATE] [--seed S] [--batches-per-epoch K] [--start-batch B] [--no-reset-state] [--resume W]` → `results/checkpoints/*.weights.h5` + `results/checkpoints/loss_history.json`. Uses a **stateful Keras RNN** (`RNN(cell, return_sequences=True, stateful=True, name='border_rnn')` with the `BorderMeanFieldNetwork` cell from `train_simple.py`). Training is a manual loop over `model.train_on_batch(...)` so the cell's state (r, v, w, R, U, A) propagates across the `N_BATCHES_PER_EPOCH=4` sequential batches each epoch (≈0.4 s of trajectory per epoch). State resets at the start of each epoch by default; pass `--no-reset-state` for a continuous run. Build with `batch_size=1` (single simulation; the old `config.BATCH_SIZE=1000` is unused). Pass `--start-batch B` to fix the starting batch index, otherwise it randomises each epoch.
+
+   **Alternative: decomposed training in two phases** (works around local-minima):
+
+   3a. `python train_phase1.py [--phase1-dir DIR] [--epochs N] [--lr 5e-3] [--seed S] [--batches-per-epoch K]` → `results/phase1/border_{N,S,E,W}_submodel.weights.h5` + `*_vars.npz`. Builds 4 sub-models in parallel logic, each with **3 units** (one pyramidal + Basket + Axo) and **24 input channels**: 21 real (d_far, d_near, speed, HD×18) + 3 teacher channels carrying the ideal targets of the other 3 pyramids (computed as `f_max_border * exp(-d/lambda)`). Each sub-model is trained with **MSE** loss on its pyramidal output only; state propagates within the cell via the stateful RNN.
+
+   3b. `python train_phase2.py [--phase1-dir DIR] [--epochs N] [--lr RATE] [--seed S] [--batches-per-epoch K]` → `results/phase2/phase2_epoch_*.weights.h5`. Lifts sub-model weights into a fresh 6-unit full model:
+
+   | full-model slot | source |
+   |---|---|
+   | Border_X self-recurrent | sub-model X's recurrent (3, 3) diagonal |
+   | Border_X → Border_Y (outgoing) | sub-model Y's teacher row for X |
+   | Border_Y → Border_X (incoming) | sub-model X's teacher row for Y |
+   | Border_X → Basket/Axo and reverse | sub-model X's recurrent row 0, cols 1/2 |
+   | Basket/Axo self & mutual | average over the 4 sub-models |
+   | real inputs → Border_X | sub-model X's input column |
+   | real inputs → Basket/Axo | average over the 4 sub-models |
+   | `I_ext` per Border | sub-model X's `I_ext[0]`; Basket/Axo averaged |
+
+   The lifted full model then continues with **MSE + decorrelation penalty** loss and the same stateful-RNN training loop as `train_simple.py`.
 4. `python visualize_results.py` → `results/loss_curve.png`, `pred_vs_target.png`, `rate_maps.png`, `inhibitory_activity.png`.
 5. `python visualize_dataset.py` → `results/dataset_preview.png`.
 6. `python plot_results.py` (legacy — reads `results.npz`; **broken**, the new pipeline writes `results/training.h5` and `results/checkpoints/`, not `results.npz`).
@@ -44,9 +63,13 @@ The Border cell network uses an IzhikevichMeanField with `tau_pop` loaded from t
 - `config.py` — single source of truth. All paths, hyperparameters, neuron/synapse type maps, trainable flags. `GRAD_METHOD='bptt'`, `N_BATCHES_PER_EPOCH=50`.
 - `utils/csv_loader.py` — loads the two `data/*.csv` files (Dori-Almog 2024 hippocampal connectome).
 - `utils/params.py` — builds `[6,6]` recurrent and `[21,6]` input TsodyksMarkram parameter matrices from CSV.
+- `utils/submodel.py` — builds `[3,3]` recurrent + `[24,3]` input matrices for a single Border sub-model (recurrent slice of full-model + teacher-input slice from CSV).
 - `utils/inputs.py` — `DistanceFar/NearGenerator`, `SpeedGenerator`, `HeadDirectionGenerator`, and the NumPy `precompute_inputs` that must stay numerically identical to them.
 - `utils/dataset.py` — `prepare_batches`, `save/load_dataset_hdf5` (HDF5 layout: `dataset/batch_{i}/{t_seq, inputs, targets}`, `inputs` shape `(1, T, 21)`, `targets` shape `(1, T, 4)`).
-- `utils/trajectory.py` — RatInABox wrapper + `interpolate_trajectory` (upsamples coarse `TRAJECTORY_DT=0.01s` to neural `DT=0.1ms`).
+- `utils/trajectory.py` — RatInABox wrapper + `interpolate_trajectory` (upsamples coarse `TRAJECTORY_DT=0.01s` to neural `DT=0.1ms`). Also `generate_concatenated_trajectories(gen, trial_duration, n_trials)` to chain N trials into one stream.
+- `train_simple.py` — full 6-unit stateful-RNN training (from-scratch). `BorderMeanFieldNetwork` layer is parametric in `units`/`pre`/`post` so the same code builds sub-models and full models.
+- `train_phase1.py` — 4 sub-models × 3 units, MSE loss, teacher-forced. Saves weights + var npz per sub-model.
+- `train_phase2.py` — lifts 4 sets of sub-model vars into the full 6-unit model and trains further with MSE + WTA.
 - `train.py` — current vectorized pipeline; builds graph with one `graph.declare_input('inputs', n_units=21)`, then a 6-unit `IzhikevichMeanField` population, with input and recurrent `TsodyksMarkramSynapse` blocks. Training uses the local `_bptt_step` `@tf.function` (target is a tensor arg, so the trace is shared across batches). `TRAIN_*` flags in config select trainable params. Basket/Axo are padded to 6 units with target rate 0.
 - `simulate.py` — legacy pipeline. The `SimulationRunner.train()` body is **commented out**; do not extend it. Uses `extra_inputs_seq` (x,y,vx,vy) fed at runtime, not precomputed inputs.
 - `assess_data_quality.py` — GBT regression of targets on inputs across lags. Writes to `results/assessment/`. Supports resume via `grid.npz`.
