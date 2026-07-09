@@ -194,8 +194,17 @@ def _mse_loss_with_reg(y_true, y_pred):
 
 def _train_stateful(model, X, Y, n_batches, n_epochs, batches_per_epoch,
                     start_batch, log_every, checkpoint_dir):
+    """Train statefully by collapsing `batches_per_epoch` consecutive batches
+    into ONE long sequence (1, K*T, n_inputs) per epoch.
+
+    This avoids per-batch GPU<->CPU sync (which `float(loss)` in a manual
+    train_on_batch loop would force). State propagates within the single
+    call; `reset_states()` clears it at epoch boundaries.
+    """
     rnn_layer = model.get_layer("border_rnn").cell
     max_start = max(0, n_batches - batches_per_epoch)
+    T = X.shape[1]
+    n_inputs = X.shape[2]
 
     model.compile(
         optimizer=tf.keras.optimizers.Adam(
@@ -210,21 +219,19 @@ def _train_stateful(model, X, Y, n_batches, n_epochs, batches_per_epoch,
         s = start_batch if start_batch is not None else (
             int(np.random.randint(0, max_start + 1)) if max_start > 0 else 0)
 
-        epoch_loss = 0.0
-        n_finite = 0
-        for i in range(batches_per_epoch):
-            x = X[s + i:s + i + 1]
-            y = Y[s + i:s + i + 1]
-            loss = model.train_on_batch(x, y)
-            v = float(loss)
-            if not np.isfinite(v):
-                print(f"\n  NaN/Inf at epoch {epoch+1}, batch {i+1} "
-                      f"(loss={v}); resetting state and skipping.")
-                rnn_layer.reset_states()
-                continue
-            epoch_loss += v
-            n_finite += 1
-        avg = epoch_loss / max(n_finite, 1)
+        x = X[s:s + batches_per_epoch]
+        y = Y[s:s + batches_per_epoch]
+        x = np.ascontiguousarray(x.reshape(1, batches_per_epoch * T, n_inputs))
+        y = np.ascontiguousarray(y.reshape(1, batches_per_epoch * T, 1))
+
+        loss = model.train_on_batch(x, y)
+        v = float(loss)
+        if not np.isfinite(v):
+            print(f"\n  NaN/Inf at epoch {epoch+1} "
+                  f"(loss={v}); resetting state and skipping.")
+            rnn_layer.reset_states()
+            continue
+        avg = v
         loss_history.append(avg)
 
         if (epoch + 1) % log_every == 0 or epoch == 0:
