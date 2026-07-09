@@ -344,7 +344,7 @@ def build_model(lr = 1e-3, batch_size = 1):
     model = Model(inputs, out)
 
     def loss_with_reg(y_true, y_pred):
-        return (tf.keras.losses.cosine_similarity(    # MeanSquaredLogarithmicError()
+        return (tf.keras.losses.MSE(    # MeanSquaredLogarithmicError()  cosine_similarity
                     y_true, y_pred[..., :4])
                 + config.WTA_WEIGHT * decorrelation_penalty(y_pred))
 
