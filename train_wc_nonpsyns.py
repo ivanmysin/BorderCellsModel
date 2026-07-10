@@ -443,7 +443,7 @@ def train(dataset_path=None, n_epochs=None, learning_rate=None,
     print(f"Loading dataset from {ds_path}...")
     X, Y = load_all_batches(ds_path)
 
-    Y = 0.01 * Y
+    Y = 0.1 * Y
 
     if X.shape[0] > 10:
         n_val = max(1, int(len(X) * val_split))
