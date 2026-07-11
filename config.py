@@ -76,7 +76,7 @@ N_TRIALS = 50                  # ~30 min total = 180 trials × 10 s
 BATCH_SIZE = 50
 
 N_BATCHES = 100
-LEARNING_RATE = 5e-3
+LEARNING_RATE = 1e-3
 N_BATCHES_PER_EPOCH = 4      # random batches sampled per epoch (dataset has ~600)
 PHASE1_BATCH_SIZE = 4         # parallel stateful trajectories per sub-model
 GRAD_METHOD = "adjoint"         # "bptt" | "adjoint"
@@ -266,6 +266,18 @@ TRAIN_SYNAPSE_TAU_d = True
 
 TRAIN_POP_IEXT = True
 TRAIN_POP_DELTA_I = False
+
+# ============================================================
+# Wilson-Cowan initial state (used when --learnable-init-state is set)
+# ============================================================
+# Default LO=HI=0 preserves the "standard" zero-init behaviour. Set HI > LO
+# (e.g. WC_INIT_NU_HI=10.0) to start optimisation from a random perturbation.
+WC_INIT_NU_LO = 0.0
+WC_INIT_NU_HI = 0.0
+WC_INIT_G_LO = 0.0
+WC_INIT_G_HI = 0.0
+WC_INIT_DG_LO = 0.0
+WC_INIT_DG_HI = 0.0
 
 # ============================================================
 # Output

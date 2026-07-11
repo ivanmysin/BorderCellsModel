@@ -230,7 +230,8 @@ class WilsonCowanNetwork(Layer):
     UINC_LO = 0.04
     UINC_HI = 0.7
 
-    def __init__(self, params, dt=0.1, batch_size=1, n_pre=None, **kwargs):
+    def __init__(self, params, dt=0.1, batch_size=1, n_pre=None,
+                 learnable_init_state=False, **kwargs):
         super().__init__(**kwargs)
         self.dt = float(dt)
         self.units = config.N_POP_UNITS
@@ -304,6 +305,43 @@ class WilsonCowanNetwork(Layer):
 
         self.output_size = self.units
 
+        # ── Learnable initial state (nu(0), g(0), dg(0)) ───────────────
+        # Default off → get_initial_state() returns zeros (legacy behaviour).
+        # When on, the initial state is a trainable variable initialised from
+        # the WC_INIT_* ranges in config.py (default LO=HI=0 ⇒ start at zero).
+        self._learnable_init_state = bool(learnable_init_state)
+        if self._learnable_init_state:
+            seed = config.RANDOM_SEED if isinstance(config.RANDOM_SEED, int) else None
+            self._nu_init = self.add_weight(
+                shape=(self.units,),
+                initializer=tf.keras.initializers.RandomUniform(
+                    minval=config.WC_INIT_NU_LO,
+                    maxval=config.WC_INIT_NU_HI,
+                    seed=seed),
+                trainable=True,
+                constraint=NonNeg(),
+                name='nu_init',
+            )
+            self._g_init = self.add_weight(
+                shape=(self.pre, self.post),
+                initializer=tf.keras.initializers.RandomUniform(
+                    minval=config.WC_INIT_G_LO,
+                    maxval=config.WC_INIT_G_HI,
+                    seed=seed),
+                trainable=True,
+                constraint=NonNeg(),
+                name='g_init',
+            )
+            self._dg_init = self.add_weight(
+                shape=(self.pre, self.post),
+                initializer=tf.keras.initializers.RandomUniform(
+                    minval=config.WC_INIT_DG_LO,
+                    maxval=config.WC_INIT_DG_HI,
+                    seed=seed),
+                trainable=True,
+                name='dg_init',
+            )
+
     # ── Transform helpers (θ → physical) ─────────────────────────────
     def _get_gsyn(self):
         # return _softplus(self._theta_gsyn)
@@ -318,6 +356,14 @@ class WilsonCowanNetwork(Layer):
         return self._theta_tau_2
 
     def get_initial_state(self, batch_size=1):
+        if self._learnable_init_state:
+            nu = tf.broadcast_to(self._nu_init[tf.newaxis, :],
+                                 [batch_size, self.units])
+            g = tf.broadcast_to(self._g_init[tf.newaxis, :, :],
+                                [batch_size, self.pre, self.post])
+            dg = tf.broadcast_to(self._dg_init[tf.newaxis, :, :],
+                                 [batch_size, self.pre, self.post])
+            return [nu, g, dg]
 
         nu = tf.zeros([batch_size, self.units], dtype=tf.float32)
         g = tf.zeros([batch_size, self.pre, self.post], dtype=tf.float32)
@@ -390,7 +436,7 @@ def gather_params(n_pre=None):
     }
     return params
 
-def build_model(lr=1e-3, batch_size=1):
+def build_model(lr=1e-3, batch_size=1, learnable_init_state=False):
     inputs = Input(shape=(None, config.N_INPUTS), batch_size=batch_size)
 
     params = gather_params(n_pre=config.N_POP_UNITS + config.N_INPUTS)
@@ -399,6 +445,7 @@ def build_model(lr=1e-3, batch_size=1):
 
 
     cell = WilsonCowanNetwork(params, dt=config.DT, batch_size=batch_size,
+                               learnable_init_state=learnable_init_state,
                                name='wc_layer')
     # 📊 Сохранение параметров в Excel
     # print("💾 Saving Wilson-Cowan parameters to Excel...")
@@ -458,7 +505,7 @@ def load_all_batches(dataset_path):
 
 def train(dataset_path=None, n_epochs=None, learning_rate=None,
          seed=None, resume=None, n_layers=1, batch_size=None,
-         val_split=0.1):
+         val_split=0.1, learnable_init_state=False):
     ds_path = dataset_path or os.path.join(
         os.path.dirname(config.TRAJECTORY_HDF5), 'dataset.h5')
     n_epochs = n_epochs or config.N_EPOCHS
@@ -485,7 +532,8 @@ def train(dataset_path=None, n_epochs=None, learning_rate=None,
     print(f"  Train: {X_train.shape[0]} batches, Val: {X_val.shape[0]} batches")
 
     print(f"Building Wilson-Cowan model ({n_layers} layers)...")
-    model = build_model(lr=lr, batch_size=batch_size)
+    model = build_model(lr=lr, batch_size=batch_size,
+                        learnable_init_state=learnable_init_state)
     n_vars = sum(int(np.prod(v.shape)) for v in model.trainable_variables)
     print(f"  Trainable parameters: {n_vars}")
     for v in model.trainable_variables:
@@ -533,9 +581,13 @@ def main():
                         help='Number of WC layers (default: 1)')
     parser.add_argument('--val_split', type=float, default=0.1,
                         help='Fraction of data for validation (default: 0.1)')
+    parser.add_argument('--learnable-init-state', action='store_true', default=False,
+                        help='Make nu(0), g(0), dg(0) trainable variables '
+                             '(default: zero-init, standard behaviour)')
     args = parser.parse_args()
     train(args.dataset, args.epochs, args.lr, seed=args.seed, resume=args.resume,
-          n_layers=args.layers, batch_size=args.batch_size, val_split=args.val_split)
+          n_layers=args.layers, batch_size=args.batch_size, val_split=args.val_split,
+          learnable_init_state=args.learnable_init_state)
 
 
 if __name__ == '__main__':
