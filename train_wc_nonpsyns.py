@@ -24,11 +24,42 @@ import tensorflow as tf
 from tensorflow.keras import Model, Input
 from tensorflow.keras.layers import RNN, Layer
 from tensorflow.keras.optimizers import Adam, AdamW
+from tensorflow.keras.constraints import Constraint, NonNeg
 import h5py
 import pandas as pd
 
 import config
 from utils.dataset import load_dataset_hdf5
+
+class MinMaxCliper(tf.keras.constraints.Constraint):
+    """
+    Constraint: Clips weights element-wise to be within [min_val, max_val].
+
+    Args:
+        min_val: Minimum value. Can be scalar, numpy array, or tf.Tensor.
+        max_val: Maximum value. Can be scalar, numpy array, or tf.Tensor.
+    """
+    def __init__(self, min_val, max_val):
+        # Convert to tensors, preserve dtype (float32 by default)
+        self.min_val = tf.constant(min_val, dtype=tf.float32)
+        self.max_val = tf.constant(max_val, dtype=tf.float32)
+
+    def __call__(self, w):
+        """
+        Clips the weights `w` element-wise to [min_val, max_val].
+
+        broadcasting is supported: e.g., w=(10,5), min_val=(5,), max_val=1.0 → OK
+        """
+        min_broadcast = tf.broadcast_to(self.min_val, tf.shape(w))
+        max_broadcast = tf.broadcast_to(self.max_val, tf.shape(w))
+        return tf.clip_by_value(w, min_broadcast, max_broadcast)
+
+    def get_config(self):
+        # Required for serialization (e.g., model.save / model.from_config)
+        return {
+            'min_val': self.min_val.numpy().tolist() if self.min_val.ndim == 0 else tf.keras.backend.get_value(self.min_val).tolist(),
+            'max_val': self.max_val.numpy().tolist() if self.max_val.ndim == 0 else tf.keras.backend.get_value(self.max_val).tolist(),
+        }
 
 
 
@@ -215,7 +246,7 @@ class WilsonCowanNetwork(Layer):
         self.ei_sign = tf.constant(ei_sign, dtype=tf.float32)
 
 
-        wc_tau = np.array([12.0, 12.0, 12.0, 12.0, 10.0, 10.0], dtype=np.float32)
+        wc_tau = np.array([20.0, 20.0, 20.0, 20.0, 10.0, 10.0], dtype=np.float32)
         wc_i_ext = np.ones( self.units, dtype=np.float32 ) + 5.0
 
 
@@ -235,30 +266,34 @@ class WilsonCowanNetwork(Layer):
 
         # ── Reparameterised weights ──────────────────────────────────
         # gsyn_max: g = softplus(θ), always > 0
-        theta_gsyn = _inv_softplus_np(params['gsyn_max'] * config.SYN_GSYN_INIT_SCALE)
+        theta_gsyn = params['gsyn_max'] #_inv_softplus_np(params['gsyn_max'] * config.SYN_GSYN_INIT_SCALE)
         self._theta_gsyn = self.add_weight(
             shape=(self.pre, self.post),
             initializer=tf.constant_initializer(theta_gsyn),
             trainable=config.TRAIN_SYNAPSE_GMAX,
             name='theta_gsyn',
+            constraint=NonNeg(),
         )
 
         # tau_1: τ_1 = exp(θ_1)
-        theta_tau_1 = np.log(np.maximum(params['tau_1'], 1e-7))
+        theta_tau_1 = params['tau_1']  #np.log(np.maximum(params['tau_1'], 1e-7))
         self._theta_tau_1 = self.add_weight(
             shape=(self.pre, self.post),
             initializer=tf.constant_initializer(theta_tau_1),
             trainable=config.TRAIN_SYNAPSE_TAU_f,
             name='theta_tau_1',
+            constraint=MinMaxCliper(min_val=2.0, max_val=15.0)
         )
 
         # tau_2: τ_2 = exp(θ_2)
-        theta_tau_2 = np.log(np.maximum(params['tau_2'], 1e-7))
+        theta_tau_2 = params['tau_2']  # np.log(np.maximum(params['tau_2'], 1e-7))
         self._theta_tau_2 = self.add_weight(
             shape=(self.pre, self.post),
             initializer=tf.constant_initializer(theta_tau_2),
             trainable=config.TRAIN_SYNAPSE_TAU_d,
             name='theta_tau_2',
+            constraint=MinMaxCliper(min_val=5.0, max_val=50.0)
+
         )
 
         self.state_size = [
@@ -271,13 +306,16 @@ class WilsonCowanNetwork(Layer):
 
     # ── Transform helpers (θ → physical) ─────────────────────────────
     def _get_gsyn(self):
-        return _softplus(self._theta_gsyn)
+        # return _softplus(self._theta_gsyn)
+        return self._theta_gsyn
 
     def _get_tau_1(self):
-        return tf.exp(self._theta_tau_1)
+        # return tf.exp(self._theta_tau_1)
+        return self._theta_tau_1
 
     def _get_tau_2(self):
-        return tf.exp(self._theta_tau_2)
+        # return tf.exp(self._theta_tau_2)
+        return self._theta_tau_2
 
     def get_initial_state(self, batch_size=1):
 
