@@ -409,18 +409,11 @@ def build_model(lr=1e-3, batch_size=1):
     return model
 
 
+
 def load_all_batches(dataset_path):
     ds = load_dataset_hdf5(dataset_path)
-    n_batches = ds['n_batches']
-    print(f"  Loading {n_batches} batches into RAM...")
-    X_list, Y_list = [], []
-    for i in range(n_batches):
-        b = ds['get_batch'](i)
-        X_list.append(b['inputs'])
-        Y_list.append(b['targets'])
-    ds['file'].close()
-    X = np.concat(X_list).astype(np.float32)
-    Y = np.concat(Y_list).astype(np.float32)
+    X = ds['X']
+    Y = ds['Y']
     print(f"  X: {X.shape}, Y: {Y.shape}, {X.nbytes / 1e6:.1f} MB")
     return X, Y
 
@@ -443,9 +436,7 @@ def train(dataset_path=None, n_epochs=None, learning_rate=None,
     print(f"Loading dataset from {ds_path}...")
     X, Y = load_all_batches(ds_path)
 
-    Y = 0.1 * Y
-
-    if X.shape[0] > 10:
+    if X.shape[0] > 10000:
         n_val = max(1, int(len(X) * val_split))
         X_val, Y_val = X[-n_val:], Y[-n_val:]
         X_train, Y_train = X[:-n_val], Y[:-n_val]

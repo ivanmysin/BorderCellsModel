@@ -130,7 +130,7 @@ def precompute_inputs(traj: dict) -> np.ndarray:
         np.ndarray of shape [n_steps, N_INPUTS] with input rates in Hz.
         Columns: [d_far, d_near, speed, HD_0..HD_17]
     """
-    n_steps = len(traj['x'])
+    n_steps = traj['x'].shape[1]
     x = traj['x']
     y = traj['y']
     speed = traj['speed']
@@ -156,14 +156,18 @@ def precompute_inputs(traj: dict) -> np.ndarray:
 
     # HD: same formula as HeadDirectionGenerator
     theta_pref_rad = np.deg2rad(config.THETA_PREF)  # [18]
-    theta = hd[:, np.newaxis]  # [n_steps, 1]
+    theta = hd[:, :, np.newaxis]  # [n_steps, 1]
     kappa = config.KAPPA_HD
     f_max = config.F_MAX_HD / np.exp(kappa)
     hd_rates = f_max * np.exp(kappa * np.cos(theta - theta_pref_rad))  # [n_steps, 18]
 
-    return np.column_stack([
+    d_far = d_far[:, :, np.newaxis]
+    d_near = d_near[:, :, np.newaxis]
+    speed_rate = speed_rate[:, :, np.newaxis]
+
+    return np.concat([
         d_far,
         d_near,
         speed_rate,
         hd_rates,
-    ]).astype(np.float32)
+    ], axis=-1).astype(np.float32)

@@ -24,8 +24,8 @@ def generate_dataset(trajectory_path: str = None, output_path: str = None):
 
     print(f"Loading trajectory from {traj_path}...")
     traj = load_trajectory_from_hdf5(traj_path)
-    n_steps = len(traj['x'])
-    print(f"  Steps: {n_steps}, duration: {traj['t'][-1]:.1f} s")
+    n_steps = traj['x'].shape[1]
+    print(f"  Steps: {n_steps}, duration: {traj['t'][0, -1]:.1f} s")
 
     print("Precomputing inputs (21 channels)...")
     inputs = precompute_inputs(traj)
@@ -40,11 +40,6 @@ def generate_dataset(trajectory_path: str = None, output_path: str = None):
     print(f"  targets shape: {targets.shape}")
     print(f"  target range: [{targets.min():.2f}, {targets.max():.2f}] Hz")
 
-    print(f"Splitting into batches (duration={config.BATCH_DURATION}s)...")
-    batches = prepare_batches(inputs, targets)
-    print(f"  {len(batches)} batches, {batches[0]['t_seq'].shape[1]} steps each")
-
-    print(f"  batch 0: input shape: {batches[0]['inputs'].shape}, target shape: {batches[0]['targets'].shape}")
 
     metadata = {
         'trajectory_path': traj_path,
@@ -52,7 +47,7 @@ def generate_dataset(trajectory_path: str = None, output_path: str = None):
         'batch_duration': config.BATCH_DURATION,
     }
     print(f"Saving dataset to {out_path}...")
-    save_dataset_hdf5(out_path, batches, metadata)
+    save_dataset_hdf5(out_path, inputs, targets, metadata)
     print(f"Done. Dataset saved to {out_path}")
 
     return out_path

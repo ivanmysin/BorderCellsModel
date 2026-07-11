@@ -174,31 +174,25 @@ def prepare_batches(inputs: np.ndarray, targets: np.ndarray,
     return batches
 
 
-def save_dataset_hdf5(path: str, batches: list, metadata: dict = None):
+def save_dataset_hdf5(path: str, inputs: np.ndarray, targets: np.ndarray, metadata: dict = None):
     """Save dataset batches to HDF5.
 
     Args:
         path: output HDF5 file path
-        batches: list of dicts from prepare_batches
+
         metadata: optional dict of metadata to save
     """
     with h5py.File(path, 'w') as f:
-        ds_grp = f.create_group('dataset')
-        ds_grp.attrs['n_batches'] = len(batches)
-        ds_grp.attrs['batch_steps'] = batches[0]['t_seq'].shape[1] if batches else 0
-        ds_grp.attrs['dt'] = config.DT
-        ds_grp.attrs['arena_cm'] = config.ARENA_CM
+        f.attrs['dt'] = config.DT
+        f.attrs['arena_cm'] = config.ARENA_CM
 
         if metadata:
             for k, v in metadata.items():
                 if isinstance(v, (int, float, str)):
-                    ds_grp.attrs[k] = v
+                    f.attrs[k] = v
 
-        for i, batch in enumerate(batches):
-            grp = ds_grp.create_group(f'batch_{i}')
-            grp.create_dataset('t_seq', data=batch['t_seq'])
-            grp.create_dataset('inputs', data=batch['inputs'])
-            grp.create_dataset('targets', data=batch['targets'])
+        f.create_dataset('inputs', data=inputs)
+        f.create_dataset('targets', data=targets)
 
 
 def load_dataset_hdf5(path: str) -> dict:
@@ -210,22 +204,16 @@ def load_dataset_hdf5(path: str) -> dict:
             n_batches: number of batches
             get_batch(i): function to load batch i
     """
-    f = h5py.File(path, 'r')
-    ds = f['dataset']
-    metadata = dict(ds.attrs)
-    n_batches = int(ds.attrs['n_batches'])
+    with h5py.File(path, 'r') as f:
+        metadata = dict(f.attrs)
+        X = f['inputs'][:]
+        Y = f['targets'][:]
 
-    def get_batch(i: int) -> dict:
-        grp = ds[f'batch_{i}']
-        return {
-            't_seq': grp['t_seq'][:],
-            'inputs': grp['inputs'][:],
-            'targets': grp['targets'][:],
-        }
+
 
     return {
         'file': f,
         'metadata': metadata,
-        'n_batches': n_batches,
-        'get_batch': get_batch,
+        'X': X,
+        'Y': Y,
     }

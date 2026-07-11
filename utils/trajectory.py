@@ -22,7 +22,7 @@ class TrajectoryGenerator:
             }
         )
 
-    def generate(self, duration: float) -> dict:
+    def generate(self, duration: float, x0=0.25, y0=0.25) -> dict:
         """Generate a single trajectory.
 
         Returns dict with keys:
@@ -41,6 +41,8 @@ class TrajectoryGenerator:
                 "thigmotaxis": config.THIGMOTAXIS,
             }
         )
+
+        agent.pos = np.array([x0, y0])
 
         n_steps = int( duration / self.dt )
         print('n_steps =', n_steps)
