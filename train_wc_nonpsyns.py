@@ -474,7 +474,7 @@ def train(dataset_path=None, n_epochs=None, learning_rate=None,
     print(f"Loading dataset from {ds_path}...")
     X, Y = load_all_batches(ds_path)
 
-    if X.shape[0] > 10000:
+    if X.shape[0] > 10:
         n_val = max(1, int(len(X) * val_split))
         X_val, Y_val = X[-n_val:], Y[-n_val:]
         X_train, Y_train = X[:-n_val], Y[:-n_val]
