@@ -273,11 +273,11 @@ TRAIN_POP_DELTA_I = False
 # Default LO=HI=0 preserves the "standard" zero-init behaviour. Set HI > LO
 # (e.g. WC_INIT_NU_HI=10.0) to start optimisation from a random perturbation.
 WC_INIT_NU_LO = 0.0
-WC_INIT_NU_HI = 0.0
+WC_INIT_NU_HI = 10.0
 WC_INIT_G_LO = 0.0
-WC_INIT_G_HI = 0.0
-WC_INIT_DG_LO = 0.0
-WC_INIT_DG_HI = 0.0
+WC_INIT_G_HI = 5.0
+WC_INIT_DG_LO = -1.0
+WC_INIT_DG_HI = 1.0
 
 # ============================================================
 # Output
