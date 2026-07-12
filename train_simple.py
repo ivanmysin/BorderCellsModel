@@ -121,7 +121,8 @@ class BorderMeanFieldNetwork(Layer):
     Trainable: gsyn_max, I_ext (others frozen by config.TRAIN_* flags).
     """
 
-    def __init__(self, params, dt_dim=0.1, batch_size=1, **kwargs):
+    def __init__(self, params, dt_dim=0.1, batch_size=1,
+                 learnable_init_state=False, **kwargs):
         super().__init__(**kwargs)
         self.dt_dim = float(dt_dim)
         self.units = int(np.asarray(params['alpha']).shape[0])
@@ -193,6 +194,61 @@ class BorderMeanFieldNetwork(Layer):
             name='Uinc',
         )
 
+        # ── Learnable initial state (r, v, w, R, U, A) ────────────────
+        # Default off → get_initial_state() returns random samples (legacy).
+        # When on, the initial state is a trainable variable initialised
+        # from the BORDER_INIT_* ranges in config.py (defaults reproduce
+        # the legacy sampling distributions).
+        self._learnable_init_state = bool(learnable_init_state)
+        if self._learnable_init_state:
+            seed = config.RANDOM_SEED if isinstance(config.RANDOM_SEED, int) else None
+            self._r_init = self.add_weight(
+                shape=(self.units,),
+                initializer=tf.keras.initializers.RandomUniform(
+                    minval=config.BORDER_INIT_R_LO,
+                    maxval=config.BORDER_INIT_R_HI,
+                    seed=seed),
+                trainable=True,
+                constraint=tf.keras.constraints.NonNeg(),
+                name='r_init',
+            )
+            self._v_init = self.add_weight(
+                shape=(self.units,),
+                initializer=tf.keras.initializers.RandomNormal(
+                    mean=config.BORDER_INIT_V_MEAN,
+                    stddev=config.BORDER_INIT_V_STD,
+                    seed=seed),
+                trainable=True,
+                name='v_init',
+            )
+            self._w_init = self.add_weight(
+                shape=(self.units,),
+                initializer=tf.constant_initializer(config.BORDER_INIT_W_VAL),
+                trainable=True,
+                name='w_init',
+            )
+            self._R_init = self.add_weight(
+                shape=(self.pre, self.post),
+                initializer=tf.constant_initializer(config.BORDER_INIT_TM_R),
+                trainable=True,
+                constraint=MinMax(0.0, 1.0),
+                name='R_init',
+            )
+            self._U_init = self.add_weight(
+                shape=(self.pre, self.post),
+                initializer=tf.constant_initializer(config.BORDER_INIT_TM_U),
+                trainable=True,
+                constraint=MinMax(0.0, 1.0),
+                name='U_init',
+            )
+            self._A_init = self.add_weight(
+                shape=(self.pre, self.post),
+                initializer=tf.constant_initializer(config.BORDER_INIT_TM_A),
+                trainable=True,
+                constraint=MinMax(0.0, 1.0),
+                name='A_init',
+            )
+
         self.state_size = [
             tf.TensorShape([batch_size, self.units]),
             tf.TensorShape([batch_size, self.units]),
@@ -204,6 +260,22 @@ class BorderMeanFieldNetwork(Layer):
         self.output_size = self.units
 
     def get_initial_state(self, batch_size=1):
+        if self._learnable_init_state:
+            return [
+                tf.broadcast_to(self._r_init[tf.newaxis, :],
+                                [batch_size, self.units]),
+                tf.broadcast_to(self._v_init[tf.newaxis, :],
+                                [batch_size, self.units]),
+                tf.broadcast_to(self._w_init[tf.newaxis, :],
+                                [batch_size, self.units]),
+                tf.broadcast_to(self._R_init[tf.newaxis, :, :],
+                                [batch_size, self.pre, self.post]),
+                tf.broadcast_to(self._U_init[tf.newaxis, :, :],
+                                [batch_size, self.pre, self.post]),
+                tf.broadcast_to(self._A_init[tf.newaxis, :, :],
+                                [batch_size, self.pre, self.post]),
+            ]
+
         return [
             tf.random.uniform([batch_size, self.units], minval=0.0,
                               maxval=0.1, dtype=tf.float32),
@@ -335,10 +407,11 @@ def decorrelation_penalty(y_pred):
     return tf.reduce_mean(off_sum / denom)
 
 
-def build_model(lr = 1e-3, batch_size = 1):
+def build_model(lr = 1e-3, batch_size = 1, learnable_init_state=False):
     params = gather_params()
     inputs = Input(shape=(None, config.N_INPUTS), batch_size=batch_size)
-    cell = BorderMeanFieldNetwork(params, dt_dim=config.DT, batch_size=batch_size)
+    cell = BorderMeanFieldNetwork(params, dt_dim=config.DT, batch_size=batch_size,
+                                  learnable_init_state=learnable_init_state)
     rnn = RNN(cell, return_sequences=True, stateful=True, name='border_rnn')
     out = rnn(inputs)
     model = Model(inputs, out)
@@ -478,7 +551,7 @@ def save_training_results(loss_history, model):
 def train(dataset_path=None, n_epochs=None, learning_rate=None,
           batches_per_epoch=None, seed=None, resume=None,
           start_batch=None, reset_state_per_epoch=True,
-          checkpoint_dir=None):
+          checkpoint_dir=None, learnable_init_state=False):
     """Train the stateful border cell RNN.
 
     Each epoch processes `batches_per_epoch` consecutive stored batches
@@ -530,7 +603,7 @@ def train(dataset_path=None, n_epochs=None, learning_rate=None,
             f"batches_per_epoch ({batches_per_epoch}) > n_batches ({n_batches})")
 
     print("Building model (stateful RNN, batch_size=1)...")
-    model = build_model(lr, batch_size=1)
+    model = build_model(lr, batch_size=1, learnable_init_state=learnable_init_state)
     n_vars = sum(int(np.prod(v.shape)) for v in model.trainable_variables)
     print(f"  Trainable parameters: {n_vars}")
     print(f"  Trainable variables: {[v.name for v in model.trainable_variables]}")
@@ -631,11 +704,15 @@ def main():
     parser.add_argument('--resume', type=str, default=None,
                         help='Path to a previous results/checkpoints/latest.weights.h5 to '
                              'load trained weights from before training continues.')
+    parser.add_argument('--learnable-init-state', action='store_true', default=False,
+                        help='Make (r, v, w, R, U, A) initial-state components trainable '
+                             'variables (default: random sampling each reset).')
     args = parser.parse_args()
     train(args.dataset, args.epochs, args.lr, args.batches_per_epoch,
           args.seed, args.resume,
           start_batch=args.start_batch,
-          reset_state_per_epoch=not args.no_reset_state)
+          reset_state_per_epoch=not args.no_reset_state,
+          learnable_init_state=args.learnable_init_state)
 
 
 if __name__ == '__main__':

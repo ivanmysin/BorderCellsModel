@@ -268,6 +268,20 @@ TRAIN_POP_IEXT = True
 TRAIN_POP_DELTA_I = False
 
 # ============================================================
+# Initial state ranges for BorderMeanFieldNetwork (used when
+# --learnable-init-state is set in train_simple.py). Defaults reproduce
+# the legacy random sampling in BorderMeanFieldNetwork.get_initial_state().
+# ============================================================
+BORDER_INIT_R_LO = 0.0
+BORDER_INIT_R_HI = 0.1
+BORDER_INIT_V_MEAN = 0.0
+BORDER_INIT_V_STD = 0.01
+BORDER_INIT_W_VAL = 0.0
+BORDER_INIT_TM_R = 1.0
+BORDER_INIT_TM_U = 0.0
+BORDER_INIT_TM_A = 0.0
+
+# ============================================================
 # Wilson-Cowan initial state (used when --learnable-init-state is set)
 # ============================================================
 # Default LO=HI=0 preserves the "standard" zero-init behaviour. Set HI > LO
