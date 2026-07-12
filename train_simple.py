@@ -618,7 +618,7 @@ def train(dataset_path=None, n_epochs=None, learning_rate=None,
     callbacks = [
         NaNStopping(),
         CheckpointCallback(),
-        R2ValidationCallback(X_val, Y_val),
+        # R2ValidationCallback(X_val, Y_val),
     ]
 
     t_start = time.time()
