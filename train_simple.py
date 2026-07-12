@@ -492,20 +492,16 @@ def setup_gpu():
 
 
 def load_all_batches(dataset_path):
+    """Load the whole dataset into RAM as flat (n_trials, n_steps, ...) arrays.
+
+    Mirrors ``train_wc_nonpsyns.load_all_batches`` — reads ``inputs`` and
+    ``targets`` straight from the HDF5 root and returns them as
+    ``(n_trials, n_steps, N_INPUTS)`` and ``(n_trials, n_steps, 4)``.
+    """
     ds = load_dataset_hdf5(dataset_path)
-    n_batches = ds['n_batches']
-    print(f"  Loading {n_batches} batches into RAM...")
-    X_list = []
-    Y_list = []
-    for i in range(n_batches):
-        batch = ds['get_batch'](i)
-        X_list.append(batch['inputs'])
-        Y_list.append(batch['targets'])
-    ds['file'].close()
-    X = np.concat(X_list).astype(np.float32)
-    Y = np.concat(Y_list).astype(np.float32)
-    print(f"  X shape: {X.shape}, Y shape: {Y.shape}, "
-          f"X memory: {X.nbytes / 1e6:.1f} MB")
+    X = ds['X']
+    Y = ds['Y']
+    print(f"  X: {X.shape}, Y: {Y.shape}, {X.nbytes / 1e6:.1f} MB")
     return X, Y
 
 
@@ -597,10 +593,10 @@ def train(dataset_path=None, n_epochs=None, learning_rate=None,
     print("X shape:", X.shape)
     print("Y shape:", Y.shape)
 
-    n_batches = X.shape[0]
-    if batches_per_epoch > n_batches:
+    n_trials = X.shape[0]
+    if batches_per_epoch > n_trials:
         raise ValueError(
-            f"batches_per_epoch ({batches_per_epoch}) > n_batches ({n_batches})")
+            f"batches_per_epoch ({batches_per_epoch}) > n_trials ({n_trials})")
 
     print("Building model (stateful RNN, batch_size=1)...")
     model = build_model(lr, batch_size=1, learnable_init_state=learnable_init_state)
@@ -617,11 +613,11 @@ def train(dataset_path=None, n_epochs=None, learning_rate=None,
         config.RESULTS_DIR, 'checkpoints')
     os.makedirs(checkpoint_dir, exist_ok=True)
 
-    max_start = max(0, n_batches - batches_per_epoch)
+    max_start = max(0, n_trials - batches_per_epoch)
     log_every = max(1, n_epochs // 20)
 
     print(f"Training (stateful): {n_epochs} epochs × {batches_per_epoch} "
-          f"sequential batches/epoch (out of {n_batches}); "
+          f"sequential trials/epoch (out of {n_trials}); "
           f"reset_state_per_epoch={reset_state_per_epoch}...")
 
     loss_history = []
