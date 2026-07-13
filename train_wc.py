@@ -101,37 +101,44 @@ class R2Metric(tf.keras.metrics.Metric):
 
 
 class R2ValidationCallback(tf.keras.callbacks.Callback):
-    """R² on held-out validation data after each epoch."""
+    """R² on held-out validation data after each epoch.
 
-    def __init__(self, x_val, y_val):
+    Uses ``model.predict`` (compiled forward pass) instead of a direct
+    ``model(x)`` call in eager mode — eager forward through a 100k-step
+    RNN is ~10× slower than the compiled version that ``model.fit`` uses.
+    """
+
+    def __init__(self, x_val, y_val, batch_size):
         super().__init__()
         self.x_val = x_val
-        self.y_val = y_val
+        self.batch_size = batch_size
+        # Pre-compute the warmup-sliced target once; it never changes.
+        self._y_true = tf.constant(
+            y_val[..., config.LOSS_WARMUP_STEPS:, :4], dtype=tf.float32)
 
     def on_epoch_end(self, epoch, logs=None):
-        warmup = config.LOSS_WARMUP_STEPS
-        y_true = tf.constant(self.y_val[..., warmup:, :4], dtype=tf.float32)
-        y_pred = tf.constant(
-            self.model(self.x_val, training=False)[..., warmup:, :4],
-            dtype=tf.float32)
+        y_pred = self.model.predict(
+            self.x_val, batch_size=self.batch_size, verbose=0
+        )[..., config.LOSS_WARMUP_STEPS:, :4]
 
-        ss_res = tf.reduce_sum(tf.square(y_true - y_pred))
+        ss_res = tf.reduce_sum(tf.square(self._y_true - y_pred))
         ss_tot = tf.reduce_sum(tf.square(
-            y_true - tf.reduce_mean(y_true, axis=-2, keepdims=True)))
-        r2 = 1.0 - ss_res / (ss_tot + 1e-8)
+            self._y_true - tf.reduce_mean(self._y_true, axis=-2, keepdims=True)))
+        r2 = float(1.0 - ss_res / (ss_tot + 1e-8))
 
-        per_cell = []
-        for c in range(4):
-            yt, yp = y_true[..., c], y_pred[..., c]
-            s_res = tf.reduce_sum(tf.square(yt - yp))
-            s_tot = tf.reduce_sum(tf.square(
-                yt - tf.reduce_mean(yt, axis=-1, keepdims=True)))
-            per_cell.append(float(1.0 - s_res / (s_tot + 1e-8)))
+        # Batched per-cell R²: one reduce over [n_val, T, 4] instead of a
+        # Python loop over 4 cells.
+        yt_mean = tf.reduce_mean(self._y_true, axis=-2, keepdims=True)
+        s_res = tf.reduce_sum(
+            tf.square(self._y_true - y_pred), axis=[-3, -2])
+        s_tot = tf.reduce_sum(
+            tf.square(self._y_true - yt_mean), axis=[-3, -2])
+        per_cell = (1.0 - s_res / (s_tot + 1e-8)).numpy().tolist()
 
         names = ['B_N', 'B_S', 'B_E', 'B_W']
         cell_str = '  '.join(
             f'{n}={r2c:.4f}' for n, r2c in zip(names, per_cell))
-        print(f"  [val] R²={float(r2):.4f}  ({cell_str})")
+        print(f"  [val] R²={r2:.4f}  ({cell_str})")
 
 
 class CheckpointCallback(tf.keras.callbacks.Callback):
@@ -495,7 +502,7 @@ def train(dataset_path=None, n_epochs=None, learning_rate=None,
     callbacks = [
         NaNStopping(),
         CheckpointCallback(),
-        R2ValidationCallback(X_val, Y_val),
+        R2ValidationCallback(X_val, Y_val, batch_size=batch_size),
     ]
 
     t_start = time.time()
@@ -509,8 +516,9 @@ def train(dataset_path=None, n_epochs=None, learning_rate=None,
     total_dt = time.time() - t_start
     print(f"Training done in {total_dt/60:.1f} min.")
 
-    y_true = tf.constant(Y_val[..., :4], dtype=tf.float32)
-    y_pred = tf.constant(model(X_val, training=False)[..., :4])
+    y_pred = model.predict(
+        X_val, batch_size=batch_size, verbose=0)[..., :4]
+    y_true = Y_val[..., :4]
 
     ss_res = tf.reduce_sum(tf.square(y_true - y_pred))
     ss_tot = tf.reduce_sum(tf.square(
