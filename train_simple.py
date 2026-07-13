@@ -461,12 +461,12 @@ def build_model(lr = 1e-3, batch_size = 1, learnable_init_state=False):
     model = Model(inputs, out)
 
     def loss_with_reg(y_true, y_pred):
-        return (tf.keras.losses.MSE(    # MeanSquaredLogarithmicError()  cosine_similarity
+        return (tf.keras.losses.MSLE(    # MeanSquaredLogarithmicError()  cosine_similarity
                     y_true, y_pred[..., :4])
                 + config.WTA_WEIGHT * decorrelation_penalty(y_pred))
 
     model.compile(
-        optimizer=Adam(learning_rate=lr, clipvalue=10.0),
+        optimizer=Adam(learning_rate=lr, clipnorm=1.0),
         loss=loss_with_reg,
         metrics=[R2Metric()],
     )
