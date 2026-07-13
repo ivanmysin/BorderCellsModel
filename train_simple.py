@@ -624,6 +624,7 @@ def train(dataset_path=None, n_epochs=None, learning_rate=None,
     t_start = time.time()
     history = model.fit(
         X_train, Y_train,
+        validation_data=(X_val, Y_val),
         epochs=n_epochs,
         batch_size=batch_size,
         verbose=2,
