@@ -50,15 +50,36 @@ def _get_e_r_input(tgt_type: str) -> float:
 
 
 def build_rec_gsyn_matrix() -> np.ndarray:
-    """Build [6,6] gsyn_max matrix for recurrent connections."""
+    """Build [6,6] gsyn_max matrix for recurrent connections.
+
+    Attractor-style role assignment (deterministic):
+      - Border self-excitation: B_X → B_X  (SELF_EXC)
+      - Borders drive Basket:  B_X → Basket (B_TO_BASKET)
+      - Basket inhibits all borders: Basket → B_X (BASKET_TO_B)
+      - Basket self-inhibition: Basket → Basket (BASKET_SELF)
+      - Axo globally inhibits borders: Axo → B_X (AXO_TO_B)
+      - Axo self-inhibition: Axo → Axo (AXO_SELF)
+      - All cross-border connections are 0 (WTA purely via Basket)
+
+    Magnitudes are final gsyn_max values (NOT multiplied by
+    GSYN_SCALE_DIMENSIONAL). Calibrated so I_syn ≈ 2-3 at 15 Hz
+    steady state (A ≈ 0.018).
+    """
+    g = config.ATTRACTOR_GSYN
     m = np.zeros((config.N_POP_UNITS, config.N_POP_UNITS), dtype=np.float64)
-    for i, src_name in enumerate(config.UNIT_NAMES):
-        for j, tgt_name in enumerate(config.UNIT_NAMES):
-            conn_key = _get_conn_key(_UNIT_TYPES[i], _UNIT_TYPES[j])
-            p = _get_syn_params(conn_key)
-            g = p['gsyn_max'] * config.GSYN_SCALE_DIMENSIONAL
-            g *= (1.0 + np.random.uniform(-0.3, 0.3))
-            m[i, j] = max(0.001, g)
+
+    for i in range(4):
+        m[i, i] = g['SELF_EXC']
+        m[i, 4] = g['B_TO_BASKET']
+
+    for j in range(4):
+        m[4, j] = g['BASKET_TO_B']
+    m[4, 4] = g['BASKET_SELF']
+
+    for j in range(4):
+        m[5, j] = g['AXO_TO_B']
+    m[5, 5] = g['AXO_SELF']
+
     return m
 
 
@@ -144,8 +165,12 @@ def build_inp_gsyn_matrix() -> np.ndarray:
     Border_j gets a strong connection from HD cells whose preferred direction
     is close to WALL_ANGLES[j]. This gives the model the right inductive bias
     to differentiate border cells via the history of HD activity.
+
+    d_far is the primary drive for Axo (off-wall global inhibitor) and weakly
+    drives Basket too — see config.ATTRACTOR_GSYN['DFAR_TO_*'].
     """
     m = np.zeros((config.N_INPUTS, config.N_POP_UNITS), dtype=np.float64)
+    g_atr = config.ATTRACTOR_GSYN
     for i, inp_name in enumerate(_INPUT_NAMES):
         conn_key = 'Input→Pyramidal'
         p = _get_syn_params(conn_key)
@@ -159,12 +184,15 @@ def build_inp_gsyn_matrix() -> np.ndarray:
                 diff = (hd_angle - wall_angle + np.pi) % (2 * np.pi) - np.pi
                 g_dir = np.exp(-diff ** 2
                                / (2 * config.HD_SIGMA_RAD ** 2))
-                g = g_base * g_dir * (1.0 + np.random.uniform(-0.3, 0.3))
-                m[i, j] = max(0.001, g)
+                m[i, j] = max(0.001, g_base * g_dir)
+        elif inp_name == 'd_far':
+            for j in range(4):
+                m[i, j] = max(0.001, g_base)
+            m[i, 4] = g_atr['DFAR_TO_BASKET']
+            m[i, 5] = g_atr['DFAR_TO_AXO']
         else:
-            g = g_base * (1.0 + np.random.uniform(-0.3, 0.3))
             for j in _input_targets(inp_name):
-                m[i, j] = max(0.001, g)
+                m[i, j] = max(0.001, g_base)
     return m
 
 

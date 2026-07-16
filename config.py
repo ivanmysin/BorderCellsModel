@@ -217,12 +217,20 @@ E_REV_INH = -75.0
 # start of each batch. Adds variability across batches and helps
 # break symmetry in learning. The resulting transient is masked by
 # LOSS_WARMUP_STEPS so it does not contaminate the loss.
-SYN_INIT_R_LO = 0.9
-SYN_INIT_R_HI = 1.0
-SYN_INIT_U_LO = 0.9
-SYN_INIT_U_HI = 1.0
+#
+# Default values (LO=0.9, HI=1.0 for R and U) correspond to a fresh
+# synapse ready to release. For attractor initial conditions we
+# instead start the synapse in a DEPRESSED state: low R (depleted
+# available pool) and low U (low release probability). This makes
+# it harder for self-excitation to push a border into the "on"
+# state at t=0, and so reduces the chance of getting stuck in a
+# single attractor for the entire trajectory.
+SYN_INIT_R_LO = 0.3
+SYN_INIT_R_HI = 0.5
+SYN_INIT_U_LO = 0.0
+SYN_INIT_U_HI = 0.2
 SYN_INIT_A_LO = 0.0
-SYN_INIT_A_HI = 0.1
+SYN_INIT_A_HI = 0.05
 
 # Scales initial gsyn_max so I_syn starts in the active region of
 # S(I_syn) even with FRpre = E * dt_dim * 0.001. Without this, the
@@ -298,3 +306,43 @@ WC_INIT_DG_HI = 1.0
 # ============================================================
 SAVE_EVERY_N_TRIALS = 10
 PRINT_EVERY_N_TRIALS = 5
+
+# ============================================================
+# Attractor-style gsyn_max initialization (used by train_wc.py)
+# ============================================================
+# Role-based gsyn_max values for recurrent + input connections.
+# Designed to start the network close to a point-attractor solution:
+#   - 4 self-amplifying border attractors (B_X → B_X)
+#   - Competition via Basket (B_X → Basket → all B_Y)
+#   - Off-wall global inhibition via Axo (d_far → Axo → all Borders)
+#   - All cross-border connections are 0 (WTA purely via Basket)
+#
+# Magnitudes calibrated to give I_syn ≈ 2-3 at 15 Hz steady state:
+#   A ≈ 0.018 (for Exc→Exc, U=0.238, R=1, tau_d=5)
+#   I_syn = gsyn_max × A  →  gsyn_max ≈ 130-180 for I_syn ≈ 2.5
+#
+# All values are FINAL gsyn_max (not multiplied by GSYN_SCALE_DIMENSIONAL).
+ATTRACTOR_GSYN = {
+    'SELF_EXC':       70.0,  # Border_X → Border_X (was 150; reduced to avoid bistable lock-in)
+    'B_TO_BASKET':    70.0,  # Border_X → Basket
+    'BASKET_TO_B':   120.0,  # Basket → Border_X
+    'BASKET_SELF':    50.0,  # Basket → Basket
+    'AXO_TO_B':      100.0,  # Axo → Border_X
+    'AXO_SELF':       40.0,  # Axo → Axo
+    'DFAR_TO_AXO':   180.0,  # d_far → Axo (primary off-wall drive)
+    'DFAR_TO_BASKET': 30.0,  # d_far → Basket (weak auxiliary drive)
+}
+
+# Per-unit I_ext for WilsonCowanNetwork. Borders get a low baseline (0.3) so
+# they can be SILENT when no input arrives (target rate ≈ 0 at center).
+# Basket and Axo keep the standard 1.0 so they fire from rest and provide
+# tonic inhibition that borders must overcome to win the WTA.
+BORDER_INIT_I_EXT = 0.3
+BASKET_INIT_I_EXT = 1.0
+AXO_INIT_I_EXT = 1.0
+
+# Initial firing rate of Axo at t=0. The agent always starts at the arena
+# center, so d_far is at its maximum and Axo should be in its active state
+# from the very first step. Setting AXO_INIT_RATE > 0 means borders are
+# already inhibited at t=0 (no silent→Axo-ramps-up transient).
+AXO_INIT_RATE = 30.0  # Hz

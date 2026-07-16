@@ -198,7 +198,11 @@ class WilsonCowanNetwork(Layer):
         # Population params (hardcoded, from train_wc_nonpsyns.py)
         wc_tau = np.array([20.0, 20.0, 20.0, 20.0, 10.0, 10.0],
                           dtype=np.float32)
-        wc_i_ext = np.ones(self.units, dtype=np.float32)
+        wc_i_ext = np.array(
+            [config.BORDER_INIT_I_EXT] * 4
+            + [config.BASKET_INIT_I_EXT, config.AXO_INIT_I_EXT],
+            dtype=np.float32,
+        )
 
         self.tau_pop = self.add_weight(
             shape=(self.units,),
@@ -255,10 +259,11 @@ class WilsonCowanNetwork(Layer):
         if self._learnable_init_state:
             seed = (config.RANDOM_SEED
                     if isinstance(config.RANDOM_SEED, int) else None)
+            e_init_values = np.zeros(self.units, dtype=np.float32)
+            e_init_values[self.units - 1] = config.AXO_INIT_RATE
             self._E_init = self.add_weight(
                 shape=(self.units,),
-                initializer=tf.keras.initializers.RandomUniform(
-                    minval=0.0, maxval=1.0, seed=seed),
+                initializer=tf.constant_initializer(e_init_values),
                 trainable=True, constraint=NonNeg(), name='E_init',
             )
             self._R_init = self.add_weight(
@@ -308,8 +313,15 @@ class WilsonCowanNetwork(Layer):
                 tf.broadcast_to(self._A_init[tf.newaxis, :, :],
                                 [batch_size, self.pre, self.post]),
             ]
+        # Default (non-learnable) initial state:
+        # E=0 for borders and Basket, E=AXO_INIT_RATE for Axo (agent starts
+        # at the arena center, so Axo is in its active state from t=0).
+        e_init = tf.zeros([batch_size, self.units], dtype=tf.float32)
+        e_init = e_init + tf.one_hot(self.units - 1, self.units) * tf.constant(
+            config.AXO_INIT_RATE, dtype=tf.float32
+        )
         return [
-            tf.zeros([batch_size, self.units], dtype=tf.float32),
+            e_init,
             tf.random.uniform(
                 [batch_size, self.pre, self.post],
                 minval=config.SYN_INIT_R_LO, maxval=config.SYN_INIT_R_HI,
