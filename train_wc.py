@@ -287,14 +287,16 @@ class WilsonCowanNetwork(Layer):
             )
 
         self.state_size = [
-            tf.TensorShape([batch_size, self.units]),
-            tf.TensorShape([batch_size, self.pre, self.post]),
-            tf.TensorShape([batch_size, self.pre, self.post]),
-            tf.TensorShape([batch_size, self.pre, self.post]),
+            tf.TensorShape([self.units]),
+            tf.TensorShape([self.pre, self.post]),
+            tf.TensorShape([self.pre, self.post]),
+            tf.TensorShape([self.pre, self.post]),
         ]
         self.output_size = self.units
 
-    def get_initial_state(self, batch_size=1):
+    def get_initial_state(self, inputs=None, batch_size=None, dtype=None):
+        if batch_size is None:
+            batch_size = 1
         if self._learnable_init_state:
             return [
                 tf.broadcast_to(self._E_init[tf.newaxis, :],
@@ -502,7 +504,7 @@ def train(dataset_path=None, n_epochs=None, learning_rate=None,
     callbacks = [
         NaNStopping(),
         CheckpointCallback(),
-        R2ValidationCallback(X_val, Y_val, batch_size=batch_size),
+        # R2ValidationCallback(X_val, Y_val, batch_size=batch_size),
     ]
 
     t_start = time.time()
@@ -512,6 +514,7 @@ def train(dataset_path=None, n_epochs=None, learning_rate=None,
         batch_size=batch_size,
         verbose=2,
         callbacks=callbacks,
+        validation_data=(X_val, Y_val),
     )
     total_dt = time.time() - t_start
     print(f"Training done in {total_dt/60:.1f} min.")
