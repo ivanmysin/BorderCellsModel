@@ -216,7 +216,7 @@ class WilsonCowanNetwork(Layer):
         # Synapse params (direct weights + constraints, no reparameterisation)
         self.gsyn_max = self.add_weight(
             shape=(self.pre, self.post),
-            initializer=tf.constant_initializer(params['gsyn_max']),
+            initializer=tf.constant_initializer(config.GSYN_SCALE_DIMENSIONAL * params['gsyn_max']),
             trainable=config.TRAIN_SYNAPSE_GMAX,
             constraint=NonNeg(),
             name='gsyn_max',
