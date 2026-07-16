@@ -198,7 +198,7 @@ class WilsonCowanNetwork(Layer):
         # Population params (hardcoded, from train_wc_nonpsyns.py)
         wc_tau = np.array([20.0, 20.0, 20.0, 20.0, 10.0, 10.0],
                           dtype=np.float32)
-        wc_i_ext = np.ones(self.units, dtype=np.float32) + 5.0
+        wc_i_ext = np.ones(self.units, dtype=np.float32)
 
         self.tau_pop = self.add_weight(
             shape=(self.units,),
@@ -439,7 +439,7 @@ def build_model(lr=1e-3, batch_size=1, learnable_init_state=False):
     model = Model(inputs, x)
 
     def loss_with_reg(y_true, y_pred):
-        L_mse = tf.keras.losses.MSE(y_true, y_pred[..., :4]) + tf.keras.losses.cosine_similarity(y_true, y_pred[..., :4])
+        L_mse = tf.keras.losses.MSE(y_true, y_pred[..., :4]) + 10 * tf.keras.losses.cosine_similarity(y_true, y_pred[..., :4])
         L_wta = config.WTA_WEIGHT * decorrelation_penalty(y_pred)
         L_sharp = config.LOSS_WEIGHT_SHARPENING * sharpening_loss(y_pred)
         L_ei = config.LOSS_WEIGHT_EI_BALANCE * ei_balance_loss(y_pred)

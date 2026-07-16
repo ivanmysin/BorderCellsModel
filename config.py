@@ -202,9 +202,9 @@ E_REV_INH_DIM = -75.0            # GABA-A reversal (mV)
 # Tsodyks-Markram defaults (fallback if CSV lookup fails)
 # ============================================================
 TM_SYN_DEFAULTS = {
-    "Exc→Exc": {"gsyn_max": 1.72, "tau_d": 783.2, "tau_r": 7.88, "tau_f": 13.6, "Uinc": 0.238},
-    "Inh→Exc": {"gsyn_max": 6.07, "tau_d": 637.4, "tau_r": 4.41, "tau_f": 11.6, "Uinc": 0.283},
-    "Inh→Inh": {"gsyn_max": 3.32, "tau_d": 635.5, "tau_r": 3.83, "tau_f": 15.1, "Uinc": 0.274},
+    "Exc→Exc": {"gsyn_max": 1.72, "tau_d": 5.0, "tau_r": 500.0, "tau_f": 20.6, "Uinc": 0.238},
+    "Inh→Exc": {"gsyn_max": 6.07, "tau_d": 5.0, "tau_r": 500.0, "tau_f": 20.6, "Uinc": 0.283},
+    "Inh→Inh": {"gsyn_max": 3.32, "tau_d": 5.0, "tau_r": 500.0, "tau_f": 20.1, "Uinc": 0.274},
 }
 
 E_REV_EXC = 0.0
