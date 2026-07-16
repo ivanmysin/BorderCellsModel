@@ -76,7 +76,7 @@ N_TRIALS = 50                  # ~30 min total = 180 trials × 10 s
 BATCH_SIZE = 5
 
 N_BATCHES = 100
-LEARNING_RATE = 1e-3
+LEARNING_RATE = 5e-3
 N_BATCHES_PER_EPOCH = 4      # random batches sampled per epoch (dataset has ~600)
 PHASE1_BATCH_SIZE = 4         # parallel stateful trajectories per sub-model
 GRAD_METHOD = "adjoint"         # "bptt" | "adjoint"
