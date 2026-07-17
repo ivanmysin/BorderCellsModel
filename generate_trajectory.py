@@ -42,6 +42,8 @@ def generate_and_save(duration: float, plot: bool = False, n_trials: int = 1):
     for i in range(n_trials):
         traj_coarse = gen.generate(duration)
         target_dt = config.DT / 1000.0
+
+
         traj = interpolate_trajectory(traj_coarse, target_dt)
 
         for key, arr in traj.items():
