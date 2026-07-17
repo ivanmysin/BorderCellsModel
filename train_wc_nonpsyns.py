@@ -298,9 +298,9 @@ class WilsonCowanNetwork(Layer):
         )
 
         self.state_size = [
-            tf.TensorShape([self.units]),
-            tf.TensorShape([self.pre, self.post]),
-            tf.TensorShape([self.pre, self.post]),
+            tf.TensorShape([batch_size, self.units]),
+            tf.TensorShape([batch_size, self.pre, self.post]),
+            tf.TensorShape([batch_size, self.pre, self.post]),
         ]
 
         self.output_size = self.units
@@ -355,9 +355,7 @@ class WilsonCowanNetwork(Layer):
         # return tf.exp(self._theta_tau_2)
         return self._theta_tau_2
 
-    def get_initial_state(self, inputs=None, batch_size=None, dtype=None):
-        if batch_size is None:
-            batch_size = 1
+    def get_initial_state(self, batch_size=1):
         if self._learnable_init_state:
             nu = tf.broadcast_to(self._nu_init[tf.newaxis, :],
                                  [batch_size, self.units])

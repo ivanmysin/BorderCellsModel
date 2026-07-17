@@ -39,12 +39,12 @@ SYNAPSE_TYPE_MAP = {
 }
 
 # ========================================================
-DT = 0.1  # ms (neural simulation timestep)
+DT = 0.5  # ms (neural simulation timestep)
 # ============================================================
 # Arena & Trajectory (RatInABox)
 # ============================================================
 ARENA_SIZE = 0.5               # 1×1 m arena
-ARENA_CM = ARENA_SIZE * 100    # 100 cm
+ARENA_CM = ARENA_SIZE * 100    # 50 cm
 TRAJECTORY_DT = 0.01      # sec RatInABox step
 
 # Single-population unit mapping
@@ -71,9 +71,9 @@ RANDOM_SEED = 42
 # ============================================================
 SIM_DT = DT                     # neural timestep
 UP_SAMPLE_FACTOR = 1            # no upsampling — trajectory already at SIM_DT
-TRIAL_DURATION = 10.0           # 10 s per trial
+TRIAL_DURATION = 2.5           # 10 s per trial
 N_TRIALS = 50                  # ~30 min total = 180 trials × 10 s
-BATCH_SIZE = 5
+BATCH_SIZE = 50
 
 N_BATCHES = 100
 LEARNING_RATE = 1e-3
