@@ -421,22 +421,6 @@ def decorrelation_penalty(y_pred):
     return tf.reduce_mean(off_sum / denom)
 
 
-def safe_cosine_similarity(y_true, y_pred, eps: float = 1e-8):
-    """Cosine similarity with eps in the norms to avoid 0/0 = NaN.
-
-    The default ``tf.keras.losses.cosine_similarity`` returns NaN when
-    ``y_pred`` is the all-zeros vector (silent population), which is
-    exactly the state the model enters at t=0 with the new attractor
-    initial conditions (Borders suppressed by Axo, I_ext=0.3 below the
-    S-function's active region). The NaN then propagates through the
-    optimizer step and corrupts every trainable weight.
-    """
-    dot = tf.reduce_sum(y_true * y_pred, axis=-1)
-    n_true = tf.sqrt(tf.reduce_sum(tf.square(y_true), axis=-1) + eps)
-    n_pred = tf.sqrt(tf.reduce_sum(tf.square(y_pred), axis=-1) + eps)
-    return dot / (n_true * n_pred)
-
-
 def sharpening_loss(y_pred):
     """Sparse border-cell activity (winner-take-all)."""
     border = y_pred[..., :4]
@@ -467,17 +451,11 @@ def build_model(lr=1e-3, batch_size=1, learnable_init_state=False):
     model = Model(inputs, x)
 
     def loss_with_reg(y_true, y_pred):
-        yt = y_true
-        yp = y_pred[..., :4]
-        L_mse = tf.keras.losses.MSE(yt, yp)
-        # ``tf.keras.losses.cosine_similarity`` returns NaN when yp=0.
-        # Use the safe version which has eps inside the norms.
-        L_cos = -tf.reduce_mean(safe_cosine_similarity(yt, yp))
-        L_mse_total = L_mse + 10.0 * L_cos
+        L_mse = tf.keras.losses.MSE(y_true, y_pred[..., :4]) #+ 10 * tf.keras.losses.cosine_similarity(y_true, y_pred[..., :4])
         L_wta = config.WTA_WEIGHT * decorrelation_penalty(y_pred)
-        L_sharp = config.LOSS_WEIGHT_SHARPENING * sharpening_loss(y_pred)
-        L_ei = config.LOSS_WEIGHT_EI_BALANCE * ei_balance_loss(y_pred)
-        return L_mse_total + L_wta + L_sharp + L_ei
+        # L_sharp = config.LOSS_WEIGHT_SHARPENING * sharpening_loss(y_pred)
+        # L_ei = config.LOSS_WEIGHT_EI_BALANCE * ei_balance_loss(y_pred)
+        return L_mse + L_wta # + L_sharp + L_ei
 
     model.compile(
         optimizer=Adam(learning_rate=lr, clipnorm=1.0),
