@@ -45,7 +45,7 @@ DT = 0.5  # ms (neural simulation timestep)
 # ============================================================
 ARENA_SIZE = 0.5               # 1×1 m arena
 ARENA_CM = ARENA_SIZE * 100    # 50 cm
-TRAJECTORY_DT = 0.01      # sec RatInABox step
+TRAJECTORY_DT = DT * 0.001         # ms, RatInABox timestep, 0.5 ms ≈ 200 Hz, 0.0005 ≈ 201      # sec RatInABox step
 
 # Single-population unit mapping
 POPULATION_NAME = "border_cells"
@@ -73,7 +73,7 @@ SIM_DT = DT                     # neural timestep
 UP_SAMPLE_FACTOR = 1            # no upsampling — trajectory already at SIM_DT
 TRIAL_DURATION = 2.5           # 10 s per trial
 N_TRIALS = 50                  # ~30 min total = 180 trials × 10 s
-BATCH_SIZE = 50
+BATCH_SIZE = 25
 
 N_BATCHES = 100
 LEARNING_RATE = 1e-3

@@ -559,7 +559,7 @@ def main():
                         help='Make (E, R, U, A) initial-state components trainable '
                              '(default: zeros/random sampling).')
     args = parser.parse_args()
-    train(args.dataset, args.epochs, args.lr, seed=args.seed,
+    train(dataset_path=args.dataset, n_epochs=args.epochs, learning_rate=args.lr, seed=args.seed,
           resume=args.resume, batch_size=args.batch_size,
           val_split=args.val_split,
           learnable_init_state=args.learnable_init_state)
