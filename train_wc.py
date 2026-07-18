@@ -24,6 +24,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 import argparse
 import json
+import logging
 import time
 
 import numpy as np
@@ -34,6 +35,32 @@ from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.constraints import NonNeg
 
 import config
+
+
+def setup_logging(log_file=None, level=logging.INFO):
+    """Configure root + 'train_wc' loggers. Idempotent on re-runs."""
+    root = logging.getLogger()
+    if root.handlers:
+        for h in list(root.handlers):
+            root.removeHandler(h)
+    fmt = logging.Formatter(
+        '%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S',
+    )
+    sh = logging.StreamHandler()
+    sh.setFormatter(fmt)
+    root.addHandler(sh)
+    root.setLevel(level)
+    if log_file:
+        fh = logging.FileHandler(log_file, mode='w')
+        fh.setFormatter(fmt)
+        root.addHandler(fh)
+        logging.info("Logging to %s", log_file)
+    logging.getLogger('absl').setLevel(logging.WARNING)
+    logging.getLogger('tensorflow').setLevel(logging.WARNING)
+
+
+logger = logging.getLogger('train_wc')
 from utils.params import (
     build_rec_gsyn_matrix, build_rec_tau_d_matrix, build_rec_tau_r_matrix,
     build_rec_tau_f_matrix, build_rec_Uinc_matrix, build_rec_pconn_matrix,
@@ -139,6 +166,94 @@ class R2ValidationCallback(tf.keras.callbacks.Callback):
         cell_str = '  '.join(
             f'{n}={r2c:.4f}' for n, r2c in zip(names, per_cell))
         print(f"  [val] R²={r2:.4f}  ({cell_str})")
+
+
+class LossDiagnostics(tf.keras.callbacks.Callback):
+    """Per-epoch breakdown of loss components + population statistics.
+
+    Runs ``model.predict`` on a small sample of training trials (so we
+    don't blow up memory) and logs:
+        * MSE on border cells
+        * Pearson decorrelation (the actual penalty driving WTA)
+        * Sharpen loss, E/I balance
+        * Per-population mean / max / std of activity
+        * Mean |off-diagonal| Pearson across the 4 borders
+        * Per-cell R² on the diagnostic slice
+    """
+
+    def __init__(self, x_sample, y_sample, batch_size,
+                 n_trials=4, log_first_n=5, every=1):
+        super().__init__()
+        self.x_sample = x_sample
+        self.y_sample = y_sample
+        self.batch_size = batch_size
+        self.n_trials = n_trials
+        self.log_first_n = log_first_n
+        self.every = every
+
+    def on_epoch_end(self, epoch, logs=None):
+        if epoch >= self.log_first_n and (epoch % self.every) != 0:
+            return
+        logs = logs or {}
+        warmup = config.LOSS_WARMUP_STEPS
+
+        n = min(self.n_trials, self.x_sample.shape[0])
+        x = self.x_sample[:n]
+        y = self.y_sample[:n, warmup:, :4]
+        try:
+            y_pred = self.model.predict(
+                x, batch_size=self.batch_size, verbose=0)
+        except Exception as exc:
+            logger.warning("diagnostics predict failed: %s", exc)
+            return
+        if not np.isfinite(y_pred).all():
+            logger.warning("non-finite y_pred at epoch %d", epoch + 1)
+        yp = y_pred[..., :4]
+        yp_post = yp[:, warmup:, :]
+
+        # --- loss components (post-warmup) ----------------------------
+        L_mse = float(tf.reduce_mean(
+            tf.keras.losses.MSE(y, yp_post)).numpy())
+        L_corr = float(decorrelation_penalty(yp_post).numpy())
+        L_sharp = float(sharpening_loss(y_pred).numpy())
+        L_ei = float(ei_balance_loss(y_pred).numpy())
+
+        # --- per-cell R² on the slice ---------------------------------
+        yt_mean = tf.reduce_mean(y, axis=-2, keepdims=True)
+        s_res = tf.reduce_sum(tf.square(y - yp_post), axis=[-3, -2])
+        s_tot = tf.reduce_sum(tf.square(y - yt_mean), axis=[-3, -2])
+        per_cell_r2 = (
+            1.0 - s_res / (s_tot + 1e-8)).numpy().tolist()
+
+        # --- per-population activity (whole trial) ---------------------
+        pop = y_pred.reshape(-1, y_pred.shape[-1])   # (n*T, units)
+        pop_means = pop.mean(axis=0)
+        pop_max = pop.max(axis=0)
+        pop_std = pop.std(axis=0)
+        nan_frac = np.mean(~np.isfinite(pop), axis=0)
+
+        # --- pairwise Pearson summary ---------------------------------
+        pm = pairwise_pearson_matrix(yp_post).numpy()    # (n, 4, 4)
+        iu, ju = np.triu_indices(4, k=1)
+        off = np.abs(pm[:, iu, ju])
+        mean_off = float(off.mean())
+        max_off = float(off.max())
+
+        names = ['B_N', 'B_S', 'B_E', 'B_W', 'Bask', 'Axo']
+        act_str = '  '.join(
+            f'{nm}=m{pop_means[i]:.2f}/M{pop_max[i]:.2f}'
+            f'/s{pop_std[i]:.2f}/n{nan_frac[i]:.2f}'
+            for i, nm in enumerate(names))
+        r2_str = '  '.join(
+            f'{names[i]}={per_cell_r2[i]:+.3f}' for i in range(4))
+
+        logger.info(
+            "epoch %3d | L_mse=%.4f L_corr=%.4f L_sharp=%.4f L_ei=%.4f | "
+            "act %s | r2 %s | <|corr_ij|>=%.3f max=%.3f | total=%.4f",
+            epoch + 1, L_mse, L_corr, L_sharp, L_ei,
+            act_str, r2_str, mean_off, max_off,
+            float(logs.get('loss', float('nan'))),
+        )
 
 
 class CheckpointCallback(tf.keras.callbacks.Callback):
@@ -412,13 +527,42 @@ def gather_params(n_pre=None):
 
 
 def decorrelation_penalty(y_pred):
+    """Honest Pearson-correlation penalty between border populations over time.
+
+    y_pred has shape (n_batches, n_time_steps, n_units). The first 4 units
+    are Border_{N,S,E,W}. For each trial we (a) centre each population on
+    its time-mean, (b) divide by its time-std, then (c) take the mean
+    cross-product over time, giving a 4x4 Pearson matrix with 1.0 on the
+    diagonal. The penalty is the mean |corr_ij| over the 6 off-diagonal
+    pairs (i<j).
+
+    Returns a scalar in [0, 1] — 0 means the four border populations are
+    linearly uncorrelated, 1 means perfectly (anti-)correlated.
+    """
+    border = y_pred[..., :4]                                       # (B, T, 4)
+    T = tf.cast(tf.shape(border)[-2], tf.float32)
+    centred = border - tf.reduce_mean(border, axis=-2, keepdims=True)
+    var = tf.reduce_mean(centred ** 2, axis=-2)                    # (B, 4)
+    std = tf.sqrt(var + 1e-8)                                      # (B, 4)
+    normed = centred / std[..., None, :]                           # (B, T, 4)
+    corr = tf.einsum('bti,btj->bij', normed, normed) / T           # (B, 4, 4)
+    n = 4
+    iu_np, ju_np = np.triu_indices(n, k=1)
+    iu = tf.constant(iu_np, dtype=tf.int32)
+    ju = tf.constant(ju_np, dtype=tf.int32)
+    off = tf.gather(tf.gather(corr, iu, axis=-1), ju, axis=-1)     # (B, 6)
+    return tf.reduce_mean(tf.abs(off))
+
+
+def pairwise_pearson_matrix(y_pred):
+    """Per-trial Pearson correlation matrix over the 4 border units.
+    Returns a tensor (B, 4, 4) — exposed for diagnostics."""
     border = y_pred[..., :4]
     T = tf.cast(tf.shape(border)[-2], tf.float32)
-    cov = tf.einsum('bti,btj->bij', border, border) / T
-    diag = tf.linalg.diag_part(cov)
-    off_sum = tf.reduce_sum(cov, axis=[-1, -2]) - tf.reduce_sum(diag, axis=-1)
-    denom = tf.reduce_mean(diag, axis=-1) + 1e-6
-    return tf.reduce_mean(off_sum / denom)
+    centred = border - tf.reduce_mean(border, axis=-2, keepdims=True)
+    std = tf.sqrt(tf.reduce_mean(centred ** 2, axis=-2) + 1e-8)
+    normed = centred / std[..., None, :]
+    return tf.einsum('bti,btj->bij', normed, normed) / T
 
 
 def sharpening_loss(y_pred):
@@ -452,10 +596,10 @@ def build_model(lr=1e-3, batch_size=1, learnable_init_state=False):
 
     def loss_with_reg(y_true, y_pred):
         L_mse = tf.keras.losses.MSLE(y_true, y_pred[..., :4]) #+ 10 * tf.keras.losses.cosine_similarity(y_true, y_pred[..., :4])
-        # L_wta = config.WTA_WEIGHT * decorrelation_penalty(y_pred)
+        L_wta = config.WTA_WEIGHT * decorrelation_penalty(y_pred)
         # L_sharp = config.LOSS_WEIGHT_SHARPENING * sharpening_loss(y_pred)
         # L_ei = config.LOSS_WEIGHT_EI_BALANCE * ei_balance_loss(y_pred)
-        return L_mse #+ L_wta # + L_sharp + L_ei
+        return L_mse + L_wta # + L_sharp + L_ei
 
     model.compile(
         optimizer=Adam(learning_rate=lr, clipnorm=1.0),
@@ -476,20 +620,43 @@ def load_all_batches(dataset_path):
 
 def train(dataset_path=None, n_epochs=None, learning_rate=None,
           seed=None, resume=None, batch_size=None,
-          val_split=0.1, learnable_init_state=False):
+          val_split=0.1, learnable_init_state=False,
+          log_every=1, diag_n_trials=4, diag_first_n=5,
+          log_file=None, log_level=logging.INFO):
     ds_path = dataset_path or os.path.join(
         os.path.dirname(config.TRAJECTORY_HDF5), 'dataset.h5')
     n_epochs = n_epochs or config.N_EPOCHS
     lr = learning_rate or config.LEARNING_RATE
     batch_size = batch_size or config.BATCH_SIZE
 
+    setup_logging(log_file=log_file, level=log_level)
+
     if seed is not None:
         config.RANDOM_SEED = seed
     tf.random.set_seed(config.RANDOM_SEED)
     np.random.seed(config.RANDOM_SEED)
 
-    print(f"Loading dataset from {ds_path}...")
+    logger.info("=" * 72)
+    logger.info("train_wc starting")
+    logger.info("=" * 72)
+    logger.info("dataset       : %s", ds_path)
+    logger.info("n_epochs      : %d", n_epochs)
+    logger.info("batch_size    : %d", batch_size)
+    logger.info("learning_rate : %g", lr)
+    logger.info("seed          : %d", config.RANDOM_SEED)
+    logger.info("val_split     : %.2f", val_split)
+    logger.info("learnable_init: %s", learnable_init_state)
+    logger.info("resume        : %s", resume)
+    logger.info("warmup_steps  : %d", config.LOSS_WARMUP_STEPS)
+    logger.info("wta_weight    : %g", config.WTA_WEIGHT)
+    logger.info("log_every     : %d (first %d always)",
+                log_every, diag_first_n)
+    logger.info("diag_n_trials : %d", diag_n_trials)
+
+    logger.info("Loading dataset...")
     X, Y = load_all_batches(ds_path)
+    logger.info("  X: %s, Y: %s, %.1f MB",
+                X.shape, Y.shape, X.nbytes / 1e6)
 
     if X.shape[0] > 10:
         n_val = max(1, int(len(X) * val_split))
@@ -499,23 +666,28 @@ def train(dataset_path=None, n_epochs=None, learning_rate=None,
         X_val, Y_val = X, Y
         X_train, Y_train = X, Y
 
-    print(f"  Train: {X_train.shape[0]} trials, Val: {X_val.shape[0]} trials")
+    logger.info("Train: %d trials, Val: %d trials",
+                X_train.shape[0], X_val.shape[0])
 
-    print("Building Wilson-Cowan + TM-synapse model...")
+    logger.info("Building model...")
     model = build_model(lr=lr, batch_size=batch_size,
                         learnable_init_state=learnable_init_state)
     n_vars = sum(int(np.prod(v.shape)) for v in model.trainable_variables)
-    print(f"  Trainable parameters: {n_vars}")
+    logger.info("Trainable parameters: %d", n_vars)
     for v in model.trainable_variables:
-        print(f"    {v.name}: {tuple(v.shape)}")
+        logger.info("  %s: %s", v.name, tuple(v.shape))
 
     if resume and os.path.exists(resume):
-        print(f"Resuming from {resume}...")
+        logger.info("Resuming from %s", resume)
         model.load_weights(resume)
 
     callbacks = [
         NaNStopping(),
         CheckpointCallback(),
+        LossDiagnostics(X_train, Y_train, batch_size=batch_size,
+                        n_trials=diag_n_trials,
+                        log_first_n=diag_first_n,
+                        every=log_every),
         # R2ValidationCallback(X_val, Y_val, batch_size=batch_size),
     ]
 
@@ -558,11 +730,27 @@ def main():
                         default=False,
                         help='Make (E, R, U, A) initial-state components trainable '
                              '(default: zeros/random sampling).')
+    parser.add_argument('--log-every', type=int, default=1,
+                        help='Log diagnostics every N epochs (default 1).')
+    parser.add_argument('--diag-first-n', type=int, default=5,
+                        help='Always log the first N epochs regardless of --log-every.')
+    parser.add_argument('--diag-n-trials', type=int, default=4,
+                        help='How many trials to use for the per-epoch diagnostics '
+                             'forward pass (default 4).')
+    parser.add_argument('--log-file', type=str, default=None,
+                        help='Also write logs to this file.')
+    parser.add_argument('--log-level', type=str, default='INFO',
+                        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
+                        help='Logging verbosity (default INFO).')
     args = parser.parse_args()
     train(dataset_path=args.dataset, n_epochs=args.epochs, learning_rate=args.lr, seed=args.seed,
           resume=args.resume, batch_size=args.batch_size,
           val_split=args.val_split,
-          learnable_init_state=args.learnable_init_state)
+          learnable_init_state=args.learnable_init_state,
+          log_every=args.log_every, diag_n_trials=args.diag_n_trials,
+          diag_first_n=args.diag_first_n,
+          log_file=args.log_file,
+          log_level=getattr(logging, args.log_level))
 
 
 if __name__ == '__main__':
