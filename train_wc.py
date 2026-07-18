@@ -463,8 +463,8 @@ class WilsonCowanNetwork(Layer):
         h = self.dt_dim
 
         # Presynaptic firing rate → spikes/ms (Hz * 0.001 = kHz).
-        FRpre_unit = E * h  #!! 0.001 *
-        FRpre_ext = inputs * h #!! 0.001 *
+        FRpre_unit = E * h  * 0.001
+        FRpre_ext = inputs * h * 0.001
         if self.pre == self.units:
             FRpre = FRpre_ext
         else:

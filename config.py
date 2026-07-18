@@ -161,7 +161,7 @@ F_MAX_BORDER = 15.0            # Hz, peak border cell firing
 LOSS_WEIGHT_MSE = 1.0
 LOSS_WEIGHT_FR = 0.001
 LOSS_WEIGHT_SPARSITY = 0.005
-WTA_WEIGHT = 1.5                    # decorrelation penalty weight
+WTA_WEIGHT = 0.2                    # decorrelation penalty weight
 L2_GSYN_WEIGHT = 1e-6                # L2 penalty on gsyn_max
 LOSS_WEIGHT_SHARPENING = 0.0005         # sparse border-cell activity (winner-take-all)
 LOSS_WEIGHT_EI_BALANCE = 0.0005         # inhibitory activity ∝ excitatory activity
@@ -190,7 +190,7 @@ MPR_WJ_FS = 0.01                # FS adaptation jump
 # from the above values using the CSV-loaded K and V_T−V_rest for each cell type.
 # When False, I_ext is passed directly in dimensionless form.
 
-GSYN_SCALE_DIMENSIONAL = 0.05     # scale factor for gsyn_max in dimensional mode
+GSYN_SCALE_DIMENSIONAL = 10.0     # scale factor for gsyn_max in dimensional mode
 
 # ============================================================
 # Synapse reversal potentials (dimensional, mV)
