@@ -190,7 +190,7 @@ MPR_WJ_FS = 0.01                # FS adaptation jump
 # from the above values using the CSV-loaded K and V_T−V_rest for each cell type.
 # When False, I_ext is passed directly in dimensionless form.
 
-GSYN_SCALE_DIMENSIONAL = 10.5     # scale factor for gsyn_max in dimensional mode
+GSYN_SCALE_DIMENSIONAL = 0.05     # scale factor for gsyn_max in dimensional mode
 
 # ============================================================
 # Synapse reversal potentials (dimensional, mV)
