@@ -684,10 +684,10 @@ def train(dataset_path=None, n_epochs=None, learning_rate=None,
     callbacks = [
         NaNStopping(),
         CheckpointCallback(),
-        LossDiagnostics(X_train, Y_train, batch_size=batch_size,
-                        n_trials=diag_n_trials,
-                        log_first_n=diag_first_n,
-                        every=log_every),
+        # LossDiagnostics(X_train, Y_train, batch_size=batch_size,
+        #                 n_trials=diag_n_trials,
+        #                 log_first_n=diag_first_n,
+        #                 every=log_every),
         # R2ValidationCallback(X_val, Y_val, batch_size=batch_size),
     ]
 
