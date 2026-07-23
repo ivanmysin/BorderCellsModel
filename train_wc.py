@@ -528,6 +528,9 @@ def gather_params(n_pre=None):
         n_pre = config.N_POP_UNITS + config.N_INPUTS
 
     gsyn = np.vstack([build_rec_gsyn_matrix(), build_inp_gsyn_matrix()])
+
+    gsyn = np.random.rand(gsyn.shape[0], gsyn.shape[1])
+
     tau_d = np.vstack([build_rec_tau_d_matrix(), build_inp_tau_d_matrix()])
     tau_r = np.vstack([build_rec_tau_r_matrix(), build_inp_tau_r_matrix()])
     tau_f = np.vstack([build_rec_tau_f_matrix(), build_inp_tau_f_matrix()])
