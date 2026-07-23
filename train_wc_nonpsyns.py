@@ -6,8 +6,24 @@ Replaces Izhikevich mean-field with Wilson-Cowan rate dynamics:
 
 TM synapses kept identical to train_simple.py.
 
+Inputs (21 channels, see ``utils/inputs.py::precompute_inputs``):
+    [0]        d_far                       allocentric distance to wall
+    [1]        d_near                      allocentric distance to wall (clip)
+    [2]        speed                       β₀ + β₁·|v|
+    [3..10]    CB×8                        egocentric bearing to center
+    [11..18]   CD×HD×8                     allocentric HD × positive CD slope
+    [19]       cd_far                      distance to center (positive slope)
+    [20]       cd_near                     distance to center (negative slope)
+
+This script does NOT use ``utils/params.py``: its ``gather_params`` (line ~420)
+generates random-perturbed gsyn_max (in [0, 1e-4]) for the full [27, 6]
+block. With random init, no input→border inductive bias is encoded — the
+network must learn the connection structure from scratch. For an inductive
+bias matching the new input semantics (CB, CD×HD, cd_far/near), use
+``train_wc.py`` instead.
+
 Usage:
-    python train_wc.py [--dataset data/dataset.h5] [--epochs 100] [--lr 1e-3]
+    python train_wc_nonpsyns.py [--dataset data/dataset.h5] [--epochs 100] [--lr 1e-3]
 """
 import os
 

@@ -8,12 +8,25 @@ from utils.csv_loader import get_synapse_params_for_connection, get_neuron_ei, g
 # Unit indices: 0=Border_N, 1=Border_S, 2=Border_E, 3=Border_W, 4=Basket, 5=Axo
 _UNIT_TYPES = [config.UNIT_TYPE[name] for name in config.UNIT_NAMES]
 
-# Input channel structure
+# Input channel structure (matches precompute_inputs in utils/inputs.py)
+# 0:        d_far
+# 1:        d_near
+# 2:        speed
+# 3..10:    CB_0..CB_7   (egocentric bearing to geometric center; Long et al. 2025)
+# 11..18:   CDxHD_0..7   (allocentric head direction × positive CD slope)
+# 19:       cd_far
+# 20:       cd_near
 _INPUT_NAMES = (
     ['d_far', 'd_near', 'speed']
-    + [f'HD_{i}' for i in range(config.N_HD)]
+    + [f'CB_{i}' for i in range(config.N_CB)]
+    + [f'CDxHD_{i}' for i in range(config.N_HD)]
+    + ['cd_far', 'cd_near']
 )
-assert len(_INPUT_NAMES) == config.N_INPUTS
+assert len(_INPUT_NAMES) == config.N_INPUTS, (
+    f"_INPUT_NAMES has {len(_INPUT_NAMES)} channels but "
+    f"config.N_INPUTS={config.N_INPUTS}. Update _INPUT_NAMES in utils/params.py "
+    f"to match precompute_inputs() in utils/inputs.py."
+)
 
 
 def _get_conn_key(src_type: str, tgt_type: str) -> str:
@@ -161,36 +174,58 @@ def _input_targets(inp_name: str) -> list:
 def build_inp_gsyn_matrix() -> np.ndarray:
     """Build [21,6] gsyn_max matrix for input→population connections.
 
-    For HD channels (indices 3..20), gsyn_max is direction-similarity weighted:
-    Border_j gets a strong connection from HD cells whose preferred direction
-    is close to WALL_ANGLES[j]. This gives the model the right inductive bias
-    to differentiate border cells via the history of HD activity.
+    Per-channel inductive bias (matches utils/inputs.py::precompute_inputs):
 
-    d_far is the primary drive for Axo (off-wall global inhibitor) and weakly
-    drives Basket too — see config.ATTRACTOR_GSYN['DFAR_TO_*'].
+    - d_far (idx 0):  primary drive for Axo (off-wall global inhibitor) and
+                      weak drive for Basket — see ATTRACTOR_GSYN['DFAR_TO_*'].
+                      All borders also get a weak base drive.
+    - d_near (idx 1), speed (idx 2): weak base drive to all borders.
+    - CB_i (idx 3..10): egocentric bearing to geometric center. For a Border_j
+                      cell, the most informative CB channel is the one whose
+                      θ_pref matches the allocentric bearing to the center
+                      WHEN the animal is at wall j — i.e. WALL_ANGLES[j] + π.
+                      Uses Gaussian similarity with σ=HD_SIGMA_RAD.
+    - CDxHD_i (idx 11..18): allocentric HD × positive CD slope. Behaves like
+                      the previous HD population, so use the original rule:
+                      similarity to WALL_ANGLES[j] (allocentric direction TO
+                      wall j from the animal at the wall).
+    - cd_far (idx 19): positive drive to all borders (high when far from
+                      center = at a wall).
+    - cd_near (idx 20): weak drive to all borders (high at center, low at
+                      walls; the network will learn the right sign).
     """
     m = np.zeros((config.N_INPUTS, config.N_POP_UNITS), dtype=np.float64)
     g_atr = config.ATTRACTOR_GSYN
-    for i, inp_name in enumerate(_INPUT_NAMES):
-        conn_key = 'Input→Pyramidal'
-        p = _get_syn_params(conn_key)
-        g_base = p['gsyn_max'] * config.GSYN_SCALE_DIMENSIONAL
+    conn_key = 'Input→Pyramidal'
+    p = _get_syn_params(conn_key)
+    g_base = p['gsyn_max'] * config.GSYN_SCALE_DIMENSIONAL
+    sigma2 = 2 * config.HD_SIGMA_RAD ** 2
 
-        if inp_name.startswith('HD_'):
-            hd_idx = int(inp_name.split('_')[1])
-            hd_angle = np.deg2rad(config.THETA_PREF[hd_idx])
-            for j, unit_name in enumerate(config.UNIT_NAMES[:4]):
-                wall_angle = config.WALL_ANGLES[j]
-                diff = (hd_angle - wall_angle + np.pi) % (2 * np.pi) - np.pi
-                g_dir = np.exp(-diff ** 2
-                               / (2 * config.HD_SIGMA_RAD ** 2))
-                m[i, j] = max(0.001, g_base * g_dir)
-        elif inp_name == 'd_far':
+    for i, inp_name in enumerate(_INPUT_NAMES):
+        if inp_name == 'd_far':
             for j in range(4):
                 m[i, j] = max(0.001, g_base)
             m[i, 4] = g_atr['DFAR_TO_BASKET']
             m[i, 5] = g_atr['DFAR_TO_AXO']
+        elif inp_name.startswith('CB_'):
+            cb_idx = int(inp_name.split('_')[1])
+            cb_angle = np.deg2rad(config.THETA_PREF_CB[cb_idx])
+            for j in range(4):
+                # allocentric bearing to center when animal is at wall j
+                center_bearing = (config.WALL_ANGLES[j] + np.pi) % (2 * np.pi)
+                diff = (cb_angle - center_bearing + np.pi) % (2 * np.pi) - np.pi
+                g_dir = np.exp(-diff ** 2 / sigma2)
+                m[i, j] = max(0.001, g_base * g_dir)
+        elif inp_name.startswith('CDxHD_'):
+            hd_idx = int(inp_name.split('_')[1])
+            hd_angle = np.deg2rad(config.THETA_PREF_HD[hd_idx])
+            for j in range(4):
+                wall_angle = config.WALL_ANGLES[j]
+                diff = (hd_angle - wall_angle + np.pi) % (2 * np.pi) - np.pi
+                g_dir = np.exp(-diff ** 2 / sigma2)
+                m[i, j] = max(0.001, g_base * g_dir)
         else:
+            # d_near, speed, cd_far, cd_near → weak base drive to all borders
             for j in _input_targets(inp_name):
                 m[i, j] = max(0.001, g_base)
     return m

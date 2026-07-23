@@ -9,6 +9,26 @@ Synapse model (from ``train_simple.py``):
     resource depletion. ``I_syn = gsyn * A * ei_sign`` (rate-model form,
     no reversal-potential term). State is clipped to [0, 1] per step.
 
+Inputs (21 channels, see ``utils/inputs.py::precompute_inputs``):
+    [0]        d_far                       allocentric distance to wall (positive slope)
+    [1]        d_near                      allocentric distance to wall (negative slope)
+    [2]        speed                       β₀ + β₁·|v|
+    [3..10]    CB×8                        egocentric bearing to center (Long 2025)
+    [11..18]   CD×HD×8                     allocentric HD × positive CD slope
+    [19]       cd_far                      distance to center (positive slope)
+    [20]       cd_near                     distance to center (negative slope)
+
+g_syn_max for the input→border block is built in ``utils/params.py``:
+    - d_far drives Axo (off-wall global inhibition) and Basket (weakly);
+      all borders get a weak base drive.
+    - CB_i → Border_j uses Gaussian similarity on (θ_pref_CB[i] vs
+      WALL_ANGLES[j] + π), so the CB cell whose preferred bearing matches
+      the allocentric direction to center when the animal is at wall j
+      connects most strongly.
+    - CD×HD_i → Border_j uses Gaussian similarity on
+      (θ_pref_HD[i] vs WALL_ANGLES[j]) — the original HD rule.
+    - d_near, speed, cd_far, cd_near → all borders, weak base drive.
+
 Inputs are converted to spikes/ms by the 0.001 factor (Hz → kHz) — this
 keeps the synapse equation dimensionally consistent with the Izhikevich
 model in ``train_simple.py``.
