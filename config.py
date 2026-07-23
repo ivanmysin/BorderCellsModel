@@ -108,7 +108,8 @@ DISTANCE_FAR = {
 # --- DistanceNear generator (active NEAR walls) ---
 DISTANCE_NEAR = {
     "alpha_near": 0.25,         # Hz/cm, slope magnitude (near-active)
-    "d_max": 70.0,              # cm, half-diagonal → rate=0 at this distance
+    "d_max": 35.0,              # cm, half-diagonal of 50×50cm arena ≈ 35.4
+                               # → rate=0 when d_min ≥ d_max (i.e., near arena center)
 }
 
 # --- Speed generator ---
@@ -120,10 +121,12 @@ SPEED_CELL = {
 # --- HD population vector generator (allocentric head direction) ---
 # Replaces the previous 18-HD population. Used in the conjunctive CD×HD
 # channels (see EGOCENTRIC block). 8 cells uniformly spaced at 45°.
+# Peak raised 3→8 Hz to match the dynamic range of CB cells and the
+# biological range reported in Long et al. 2025 (peak ~5-15 Hz).
 HD_POPVEC = {
     "n_hd": 8,                  # number of CD×HD cells (was 18)
     "theta_step": 45.0,         # deg, step between preferred directions
-    "f_max_hd": 3.0,            # Hz, peak HD firing rate
+    "f_max_hd": 8.0,            # Hz, peak HD firing rate (was 3.0)
     "kappa_hd": 3.0,            # von Mises concentration
 }
 
@@ -139,7 +142,7 @@ EGOCENTRIC = {
     # --- Center-bearing (CB) population ---
     "n_cb": 8,                  # number of CB cells, uniformly spaced
     "theta_step_cb": 45.0,      # deg, step between preferred bearings
-    "f_max_cb": 3.0,            # Hz, peak CB firing rate
+    "f_max_cb": 8.0,            # Hz, peak CB firing rate (was 3.0)
     "kappa_cb": 3.0,            # von Mises concentration
 
     # --- Center-distance (CD): far/near pair (mirrors d_far/d_near pattern) ---

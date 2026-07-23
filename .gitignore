@@ -2,6 +2,13 @@ venv/*
 .idea/*
 .gigaide/*
 context/*
+
+# Regenerated data + training artefacts (not source)
+data/*.h5
+results/
+
+# LibreOffice / Excel lock files
+*.~lock.*
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
