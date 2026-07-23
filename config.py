@@ -92,7 +92,7 @@ N_EPOCHS = 1000                 # full passes over all batches
 # ============================================================
 # Vectorized population
 # ============================================================
-N_INPUTS = 21                   # 1 d_far + 1 d_near + 1 speed + 18 HD
+N_INPUTS = 21                   # 1 d_far + 1 d_near + 1 speed + 8 CB + 8 CD×HD + 1 cd_far + 1 cd_near
 N_POP_UNITS = 6                 # 4 border + Basket + Axo
 POPULATION_NAME = "cells"       # name for the single vectorized population
 
@@ -117,16 +117,40 @@ SPEED_CELL = {
     "beta_1": 0.5,              # Hz/(cm/s), speed slope
 }
 
-# --- HD population vector generator ---
+# --- HD population vector generator (allocentric head direction) ---
+# Replaces the previous 18-HD population. Used in the conjunctive CD×HD
+# channels (see EGOCENTRIC block). 8 cells uniformly spaced at 45°.
 HD_POPVEC = {
-    "n_hd": 18,                 # number of HD cells
-    "theta_step": 20.0,         # deg, step between preferred directions
-    "f_max_hd": 3.0,           # Hz, peak HD firing rate
+    "n_hd": 8,                  # number of CD×HD cells (was 18)
+    "theta_step": 45.0,         # deg, step between preferred directions
+    "f_max_hd": 3.0,            # Hz, peak HD firing rate
     "kappa_hd": 3.0,            # von Mises concentration
 }
 
+# --- Egocentric spatial inputs (Long et al. 2025) ---
+# Long et al. (Nature Comms, 2025) report that MEC contains neurons tuned
+# to the egocentric bearing to the geometric center of the environment
+# (center-bearing, CB; 23.6% of cells) and to the distance from the animal
+# to the center (center-distance, CD; 12.8%). These egocentric channels
+# provide the network with directional information that the existing
+# allocentric (HD) and distance-to-wall (d_far/d_near) channels cannot
+# represent linearly.
+EGOCENTRIC = {
+    # --- Center-bearing (CB) population ---
+    "n_cb": 8,                  # number of CB cells, uniformly spaced
+    "theta_step_cb": 45.0,      # deg, step between preferred bearings
+    "f_max_cb": 3.0,            # Hz, peak CB firing rate
+    "kappa_cb": 3.0,            # von Mises concentration
+
+    # --- Center-distance (CD): far/near pair (mirrors d_far/d_near pattern) ---
+    "alpha_cd_far": 0.10,       # Hz/cm, slope (positive → far-from-center active)
+    "alpha_cd_near": 0.20,      # Hz/cm, slope magnitude (near-center active)
+    "cd_max": 50.0,             # cm, max CD (≈ arena half-diagonal) → rate=0 at this distance
+}
+
 # Derived
-THETA_PREF = [i * HD_POPVEC["theta_step"] for i in range(HD_POPVEC["n_hd"])]
+THETA_PREF_HD = [i * HD_POPVEC["theta_step"] for i in range(HD_POPVEC["n_hd"])]
+THETA_PREF_CB = [i * EGOCENTRIC["theta_step_cb"] for i in range(EGOCENTRIC["n_cb"])]
 
 # Wall direction angles (radians), used as the prior mean for HD→border gsyn_max.
 # Convention: theta = atan2(vy, vx), so NORTH (vy>0) = pi/2, EAST (vx>0) = 0,
@@ -148,6 +172,12 @@ BETA_1 = SPEED_CELL["beta_1"]
 N_HD = HD_POPVEC["n_hd"]
 F_MAX_HD = HD_POPVEC["f_max_hd"]
 KAPPA_HD = HD_POPVEC["kappa_hd"]
+N_CB = EGOCENTRIC["n_cb"]
+F_MAX_CB = EGOCENTRIC["f_max_cb"]
+KAPPA_CB = EGOCENTRIC["kappa_cb"]
+ALPHA_CD_FAR = EGOCENTRIC["alpha_cd_far"]
+ALPHA_CD_NEAR = EGOCENTRIC["alpha_cd_near"]
+CD_MAX = EGOCENTRIC["cd_max"]
 
 # ============================================================
 # Target parameters
