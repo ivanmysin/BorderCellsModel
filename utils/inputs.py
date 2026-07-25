@@ -202,13 +202,16 @@ def precompute_inputs(traj: dict) -> np.ndarray:
     # 8 cells, each with a preferred allocentric HD and a CD modulation
     # r_k(HD, CD) = h_k(HD) * g(CD), where:
     #   h_k(HD) = (F_MAX_HD / exp(κ)) * exp(κ * cos(θ_HD - θ_pref_k))   # von Mises
-    #   g(CD)   = clip(CD / CD_max, 0, 1)                                 # linear up
+    #   g(CD)   = sqrt(clip(CD / CD_max, 0, 1))                          # sqrt ramp
+    # The sqrt transform amplifies the position signal in the mid-arena
+    # zone (where the agent spends ~40% of the time per thigmotaxis=0.6)
+    # without losing the linear information near the edges.
     theta_pref_hd_rad = np.deg2rad(config.THETA_PREF_HD)  # [N_HD]
     f_max_hd = config.F_MAX_HD / np.exp(config.KAPPA_HD)
     hd_tuning = f_max_hd * np.exp(
         config.KAPPA_HD * np.cos(hd[:, :, np.newaxis] - theta_pref_hd_rad)
     )  # [batch, n_steps, N_HD]
-    cd_norm = np.clip(CD / config.CD_MAX, 0.0, 1.0)[:, :, np.newaxis]  # [batch, n_steps, 1]
+    cd_norm = np.sqrt(np.clip(CD / config.CD_MAX, 0.0, 1.0))[:, :, np.newaxis]
     cdhd_rates = hd_tuning * cd_norm
 
     d_far = d_far[:, :, np.newaxis]

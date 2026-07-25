@@ -121,12 +121,12 @@ SPEED_CELL = {
 # --- HD population vector generator (allocentric head direction) ---
 # Replaces the previous 18-HD population. Used in the conjunctive CD×HD
 # channels (see EGOCENTRIC block). 8 cells uniformly spaced at 45°.
-# Peak raised 3→8 Hz to match the dynamic range of CB cells and the
+# Peak raised 3→8→12 Hz to match the dynamic range of CB cells and the
 # biological range reported in Long et al. 2025 (peak ~5-15 Hz).
 HD_POPVEC = {
     "n_hd": 8,                  # number of CD×HD cells (was 18)
     "theta_step": 45.0,         # deg, step between preferred directions
-    "f_max_hd": 8.0,            # Hz, peak HD firing rate (was 3.0)
+    "f_max_hd": 12.0,           # Hz, peak HD firing rate (was 8.0, then 3.0)
     "kappa_hd": 3.0,            # von Mises concentration
 }
 
@@ -148,7 +148,9 @@ EGOCENTRIC = {
     # --- Center-distance (CD): far/near pair (mirrors d_far/d_near pattern) ---
     "alpha_cd_far": 0.10,       # Hz/cm, slope (positive → far-from-center active)
     "alpha_cd_near": 0.20,      # Hz/cm, slope magnitude (near-center active)
-    "cd_max": 50.0,             # cm, max CD (≈ arena half-diagonal) → rate=0 at this distance
+    "cd_max": 35.0,             # cm, max CD (= arena corner-to-center ≈ 35.4)
+                               # → clip(CD/35, 0, 1) saturates at the corners
+                               #   (was 50, leaving cd_norm in [0, 0.71] only)
 }
 
 # Derived
