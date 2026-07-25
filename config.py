@@ -71,12 +71,12 @@ RANDOM_SEED = 42
 # ============================================================
 SIM_DT = DT                     # neural timestep
 UP_SAMPLE_FACTOR = 1            # no upsampling — trajectory already at SIM_DT
-TRIAL_DURATION = 2.5           # 10 s per trial
+TRIAL_DURATION = 5.0           # 10 s per trial
 N_TRIALS = 50                  # ~30 min total = 180 trials × 10 s
 BATCH_SIZE = 25
 
 N_BATCHES = 100
-LEARNING_RATE = 1e-3
+LEARNING_RATE = 1e-4
 N_BATCHES_PER_EPOCH = 4      # random batches sampled per epoch (dataset has ~600)
 PHASE1_BATCH_SIZE = 4         # parallel stateful trajectories per sub-model
 GRAD_METHOD = "adjoint"         # "bptt" | "adjoint"
